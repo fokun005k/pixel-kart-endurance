@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="theme-color" content="#000000">
+  <title>PIXEL KART ENDURANCE</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <!-- 3D view (480x270 internal) + HUD (960x540), both upscaled pixelated -->
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <canvas id="hud" width="960" height="540"></canvas>
+
+    <!-- smartphone controls (shown only on touch devices while racing) -->
+    <div id="touch-ui">
+      <div id="steer-zone">
+        <div id="steer-base"><div id="steer-knob"></div></div>
+        <span class="steer-hint">◀ スライドでハンドル ▶</span>
+      </div>
+      <button id="tc-brake" class="tc-btn" type="button">BRAKE</button>
+      <button id="tc-accel" class="tc-btn accel" type="button">ACCEL</button>
+      <div class="tc-top">
+        <button id="tc-menu" class="tc-small" type="button" aria-label="メニュー">II</button>
+        <button id="tc-respawn" class="tc-small" type="button" aria-label="コースに復帰">R</button>
+        <button id="tc-fullscreen" class="tc-small fs-only" type="button" aria-label="全画面">⛶</button>
+      </div>
+    </div>
+    <button id="skill-btn" class="hidden" type="button"><span id="skill-btn-label">SKILL</span><small id="skill-btn-sub">SPACE</small></button>
+  </div>
+
+  <div id="rotate-hint" class="hidden">
+    <div class="rotate-box">
+      <div class="rotate-icon">📱↻</div>
+      <p>スマホを横向きにしてください</p>
+    </div>
+  </div>
+
+  <!-- ================= TITLE ================= -->
+  <section id="screen-title" class="screen">
+    <div class="panel title-panel">
+      <h1 class="logo">PIXEL KART<span>ENDURANCE</span></h1>
+      <p class="subtitle">ドット絵3D・一人称オンライン耐久カートレース</p>
+
+      <label class="field">
+        <span>プレイヤー名</span>
+        <input id="name-input" maxlength="12" placeholder="RACER" autocomplete="off">
+      </label>
+
+      <div id="invite-note" class="invite-note hidden"></div>
+
+      <button id="btn-create" class="btn big" type="button">ルームを作成する（ホスト）</button>
+
+      <div class="join-row">
+        <input id="room-input" maxlength="5" placeholder="ルームID" autocomplete="off" autocapitalize="characters">
+        <button id="btn-join" class="btn" type="button">ルームに参加する（ゲスト）</button>
+      </div>
+      <div id="title-error" class="error"></div>
+
+      <button class="btn small fs-btn touch-only fs-only" type="button">⛶ 全画面で遊ぶ</button>
+
+      <h3>サウンド</h3>
+      <div class="audio-mount"></div>
+
+      <details class="help">
+        <summary>操作方法</summary>
+        <ul class="desktop-help">
+          <li><b>W / ↑</b> アクセル　<b>S / ↓</b> ブレーキ・バック</li>
+          <li><b>A D / ← →</b> ハンドル</li>
+          <li><b>SPACE</b> アクティブスキル発動</li>
+          <li><b>1 / 2 / 3</b> ピットでタイヤ選択（ソフト/ミディアム/ハード）</li>
+          <li><b>R</b> コースに復帰　<b>M</b> ミュート　<b>ESC</b> メニュー</li>
+        </ul>
+        <ul class="touch-help">
+          <li><b>画面左側</b>を左右にスライドしてハンドル</li>
+          <li><b>ACCEL / BRAKE</b> ボタン（自動アクセルON時はブレーキだけでOK）</li>
+          <li><b>SKILL</b> ボタンでアクティブスキル発動</li>
+          <li><b>II</b> メニュー　<b>R</b> コースに復帰</li>
+          <li>横向き・全画面がおすすめです</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+
+  <!-- ================= LOBBY ================= -->
+  <section id="screen-lobby" class="screen hidden">
+    <div class="panel lobby-panel">
+      <div class="lobby-head">
+        <div class="room-id-box">
+          <span class="label">ROOM ID</span>
+          <span id="room-id" class="room-id">-----</span>
+          <button id="btn-copy" class="btn small" type="button">コピー</button>
+        </div>
+        <button id="btn-leave" class="btn small danger" type="button">退出</button>
+      </div>
+      <div class="invite-box">
+        <span class="label">招待リンク</span>
+        <input id="invite-link" readonly>
+        <button id="btn-copy-link" class="btn small" type="button">リンクをコピー</button>
+        <button id="btn-share-link" class="btn small share-only" type="button">共有…</button>
+      </div>
+      <p id="invite-warn" class="note warn hidden"></p>
+
+      <div class="lobby-grid">
+        <div class="col">
+          <h2>プレイヤー <span id="player-count"></span></h2>
+          <ul id="player-list" class="player-list"></ul>
+          <div class="host-only bot-tools">
+            <button id="btn-add-bot" class="btn small" type="button">＋ CPU追加</button>
+            <button id="btn-remove-bot" class="btn small" type="button">－ CPU削除</button>
+          </div>
+
+          <h2>レース時間 <small id="duration-note"></small></h2>
+          <div id="duration-select" class="seg"></div>
+
+          <div class="touch-only">
+            <h2>スマホ操作</h2>
+            <label class="toggle"><input type="checkbox" class="auto-accel"> 自動アクセル（ブレーキを押していない間は自動で加速）</label>
+            <button class="btn small fs-btn fs-only" type="button">⛶ 全画面</button>
+          </div>
+
+          <h2>サウンド</h2>
+          <div class="audio-mount"></div>
+        </div>
+
+        <div class="col wide">
+          <h2>コース <small id="course-note"></small></h2>
+          <div id="course-select" class="course-grid"></div>
+          <h2>時間帯</h2>
+          <div id="time-select" class="seg"></div>
+          <h2>初期タイヤ</h2>
+          <div id="tyre-select" class="tyre-cards"></div>
+          <h2>個性（スキル）</h2>
+          <div id="skill-select" class="skill-grid"></div>
+        </div>
+      </div>
+
+      <div class="lobby-foot">
+        <button id="btn-start" class="btn big host-only" type="button">レース開始！</button>
+        <span id="wait-msg" class="guest-only blink">ホストの開始を待っています…</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PIT STOP ================= -->
+  <div id="pit-menu" class="overlay hidden">
+    <div class="panel pit-panel">
+      <h2>PIT STOP</h2>
+      <div id="pit-quality" class="pit-quality"></div>
+      <div id="pit-choices" class="tyre-cards compact"></div>
+      <div id="pit-actions" class="pit-actions">
+        <button id="btn-pit-skip" class="btn small" type="button">交換せずに出発</button>
+        <span class="note desktop-only">数字キー <b>1</b>/<b>2</b>/<b>3</b> でも選択 ・ アクセルでも出発</span>
+      </div>
+      <div id="pit-progress" class="pit-progress hidden">
+        <div class="bar"><div id="pit-bar"></div></div>
+        <span id="pit-time"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PAUSE ================= -->
+  <div id="pause-menu" class="overlay hidden">
+    <div class="panel pause-panel">
+      <h2>MENU</h2>
+      <p class="note">オンラインレースは止まりません</p>
+      <div class="audio-mount"></div>
+      <label class="toggle touch-only"><input type="checkbox" class="auto-accel"> 自動アクセル</label>
+      <button id="btn-resume" class="btn" type="button">戻る</button>
+      <button id="btn-respawn" class="btn" type="button">コースに復帰（R）</button>
+      <button class="btn fs-btn touch-only fs-only" type="button">⛶ 全画面</button>
+      <button id="btn-quit" class="btn danger" type="button">レースを退出してタイトルへ</button>
+    </div>
+  </div>
+
+  <!-- ================= RESULTS ================= -->
+  <section id="screen-results" class="screen hidden">
+    <div class="panel results-panel">
+      <h1 class="logo small">RACE RESULT</h1>
+      <div id="winner" class="winner"></div>
+      <div class="table-wrap">
+        <table class="results">
+          <thead><tr><th>順位</th><th>プレイヤー</th><th>走行距離</th><th>周回</th><th>ベストラップ</th></tr></thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+      <button id="btn-back-lobby" class="btn big" type="button">ロビーに戻る</button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

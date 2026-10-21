@@ -1,0 +1,11 @@
+# Render Blueprint: free web service running the game server (Express + Socket.io)
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: pixel-kart-endurance
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/info
+    autoDeploy: true

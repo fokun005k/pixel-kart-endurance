@@ -1,0 +1,20 @@
+{
+  "name": "pixel-kart-endurance",
+  "version": "1.0.0",
+  "description": "3D pixel-art first-person online kart endurance racing (Three.js + Socket.io, no external assets)",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "share": "node share.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "three": "~0.170.0"
+  }
+}
