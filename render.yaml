@@ -5,6 +5,7 @@ services:
     name: pixel-kart-endurance
     runtime: node
     plan: free
+    region: singapore   # closest Render region to Japan (lower latency)
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /api/info
