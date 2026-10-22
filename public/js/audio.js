@@ -432,16 +432,6 @@ class SoundEngine {
         this.noiseHit(t, 0.04, 0.12, B, { type: 'bandpass', freq: 1800, q: 2 });
         this.tone(t, 140, 0.06, 'square', 0.06, B, { slideTo: 90 });
         break;
-      case 'driftStart':
-        this.noiseHit(t, 0.25, 0.18, B, { type: 'bandpass', freq: 2600, freqTo: 1400, q: 3 });
-        break;
-      case 'driftBoost': {
-        const lvl = opt.level || 1;
-        this.tone(t, 300, 0.25, 'square', 0.15, B, { slideTo: lvl > 1 ? 1500 : 1000 });
-        this._arp(t, lvl > 1 ? [988, 1318, 1760] : [784, 1046], 0.05, 'p25', 0.11);
-        this.noiseHit(t, 0.3, 0.15, B, { type: 'bandpass', freq: 900, freqTo: 3500, q: 1.5 });
-        break;
-      }
       case 'pitEnter':
         this.tone(t, 660, 0.08, 'p25', 0.1, B);
         this.tone(t + 0.1, 880, 0.12, 'p25', 0.1, B);

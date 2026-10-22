@@ -5,12 +5,6 @@
 // ============================================================
 import { PHYS, TYRES, SKILL_BY_ID, PIT, KART_R, ROAD_HALF } from './config.js';
 
-function wrapAngle(a) {
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
-}
-
 export class Kart {
   constructor(track, { id, skill = 'meister', tyreType = 'M' } = {}) {
     this.track = track;
@@ -24,12 +18,6 @@ export class Kart {
     this.shiftT = 0;        // power cut while a shift is in progress
     this.rpm = 0;           // 0..~1.05 fraction of the rev range
     this.nominalTop = PHYS.MAX_SPEED;
-
-    // handbrake drift
-    this.drifting = false;
-    this.driftDir = 0;
-    this.driftCharge = 0;   // seconds of real sliding (mini-turbo charge)
-    this.slipAngle = 0;     // body angle vs. direction of travel while drifting
 
     this.x = 0; this.y = 0; this.z = 0;
     this.vx = 0; this.vy = 0; this.vz = 0;
@@ -90,7 +78,6 @@ export class Kart {
     this.airborne = false;
     this.freezeT = 1.0;
     this.gear = 1;
-    this.drifting = false;
     this.events.push({ type: 'respawn' });
   }
 
@@ -242,7 +229,6 @@ export class Kart {
     const throttle = locked ? 0 : inp.throttle;
     const brake = locked ? 0 : inp.brake;
     const steerIn = locked ? 0 : inp.steer;
-    const hb = !locked && !!inp.handbrake && !this.airborne;
     this.steer += (steerIn - this.steer) * Math.min(1, dt * 9);
 
     // ---- transmission
@@ -268,10 +254,8 @@ export class Kart {
     const accel = PHYS.ACCEL * gearDrive * accF * (1 + slipBonus * 2) * (boosting ? this.boostAccel : 1);
 
     if (!this.airborne) {
-      // (while drifting the engine sees the full sliding speed, not just the forward part)
-      const vAbs = this.drifting ? Math.hypot(vf, vr) : Math.max(0, vf);
-      if (throttle > 0 && vAbs < vmax) {
-        const t = vAbs / vmax;
+      if (throttle > 0 && vf < vmax) {
+        const t = Math.max(0, vf) / vmax;
         vf = Math.min(vmax, vf + accel * throttle * (1 - 0.6 * t * t) * dt);
       }
       // rev limiter / engine braking above the current gear's top speed
@@ -288,80 +272,26 @@ export class Kart {
       if (locked && working) { vf = 0; vr = 0; }
       if (this.pit.state === 'menu' && throttle === 0) { vf *= 0.8; vr *= 0.8; }
 
-      // ---- handbrake: starts a drift when turning at speed, otherwise just brakes
-      const D = PHYS.DRIFT;
-      const sp0 = Math.hypot(vf, vr);
-      if (hb && !this.drifting && sp0 > D.minSpeed && Math.abs(this.steer) > D.minSteer) {
-        this.drifting = true;
-        this.driftDir = Math.sign(this.steer);
-        this.driftCharge = 0;
-        this.heading -= this.driftDir * D.flick;          // the rear steps out
-        this.events.push({ type: 'driftStart' });
-      }
-      if (hb && !this.drifting && vf > 0) vf = Math.max(0, vf - D.brake * dt);
+      // lateral grip: velocity follows heading; worn tyres -> slides wide
+      vr *= Math.exp(-PHYS.LAT_GRIP * grip * surfGrip * dt);
 
+      // steering, limited by available grip (understeer when worn)
       const sp = Math.abs(vf);
       const low = Math.min(1, sp / PHYS.TURN_FULL_SPEED);
       const gripYaw = (PHYS.LAT_ACC * grip * surfGrip) / Math.max(sp, 1);
       const want = PHYS.TURN_RATE * low;
+      const yaw = Math.min(want, gripYaw);
+      this.yawRate = this.steer * yaw * (vf < -0.1 ? -1 : 1);
+      this.heading -= this.yawRate * dt;
 
-      if (this.drifting) {
-        // Drift: the kart body rotates with the steering while the direction of travel
-        // follows the body at a limited rate. Speed is mostly kept (arcade power slide).
-        let wvx = fx * vf + rx * vr, wvz = fz * vf + rz * vr;
-        let spd = Math.hypot(wvx, wvz);
-        let phi = Math.atan2(-wvx, -wvz);                   // travel direction (heading convention)
-        this.yawRate = this.steer * D.yaw * Math.min(1, spd / 15);
-        this.heading -= this.yawRate * dt;
-        let slip = wrapAngle(this.heading - phi);
-        const follow = (hb ? D.follow : D.followRelease) * surfGrip * Math.min(1.2, grip) * dt;
-        phi += Math.sign(slip) * Math.min(Math.abs(slip), follow);
-        slip = wrapAngle(this.heading - phi);
-        if (Math.abs(slip) > D.maxSlip) this.heading = phi + Math.sign(slip) * D.maxSlip;
-        // sideways scrub: the deeper the angle, the more speed it costs
-        spd = Math.max(0, spd - ((hb ? D.drag : D.dragRelease) + D.slipDrag * Math.abs(slip)) * dt);
-        if (spd > vmax) spd = Math.max(vmax, spd - Math.max(5, (spd - vmax) * 2.5) * dt); // no speed gain from sliding
-        wvx = -Math.sin(phi) * spd; wvz = -Math.cos(phi) * spd;
-        vf = wvx * fx + wvz * fz;
-        vr = wvx * rx + wvz * rz;
-        this.slipAngle = slip;
-
-        // charge while really sliding; release -> mini turbo
-        if (Math.abs(slip) > D.chargeSlip) this.driftCharge += dt;
-        const straightened = Math.abs(slip) < 0.08 && (!hb || Math.abs(this.steer) < 0.1);
-        if (spd < 6 || straightened) {
-          this.drifting = false;
-          this.slipAngle = 0;
-          const lvl = this.driftCharge >= D.charge2 ? 2 : this.driftCharge >= D.charge1 ? 1 : 0;
-          if (lvl > 0 && spd >= 6 && !locked) {
-            const cfg = lvl === 2 ? PHYS.DRIFT_BOOST2 : PHYS.DRIFT_BOOST1;
-            this.boostAmt = this.boostT > 0 ? Math.max(this.boostAmt, cfg.amt) : cfg.amt;
-            this.boostT = Math.max(this.boostT, cfg.dur);
-            this.boostAccel = cfg.accel;
-            this.events.push({ type: 'driftBoost', level: lvl });
-          }
-          this.driftCharge = 0;
-        }
-        this.skid = Math.min(1, 0.35 + Math.abs(slip) * 1.2);
-      } else {
-        // lateral grip: velocity follows heading; worn tyres -> slides wide
-        vr *= Math.exp(-PHYS.LAT_GRIP * grip * surfGrip * dt);
-
-        // steering, limited by available grip (understeer when worn)
-        const yaw = Math.min(want, gripYaw);
-        this.yawRate = this.steer * yaw * (vf < -0.1 ? -1 : 1);
-        this.heading -= this.yawRate * dt;
-
-        let skid = Math.max(0, (Math.abs(vr) - 1.5) / 5);
-        if (Math.abs(this.steer) * want > gripYaw * 1.05 && sp > 12) skid = Math.max(skid, 0.45 * Math.abs(this.steer));
-        this.skid = Math.min(1, skid);
-      }
+      let skid = Math.max(0, (Math.abs(vr) - 1.5) / 5);
+      if (Math.abs(this.steer) * want > gripYaw * 1.05 && sp > 12) skid = Math.max(skid, 0.45 * Math.abs(this.steer));
+      this.skid = Math.min(1, skid);
     } else {
       this.heading -= this.steer * 0.7 * dt;
       vf *= 1 - 0.05 * dt;
       this.yawRate = 0;
       this.skid = 0;
-      this.drifting = false;
     }
     this.vf = vf;
 
@@ -471,7 +401,6 @@ export class Kart {
         if (sk === 'meister') mul *= 0.7;
         if (sk === 'highroller') mul *= PHYS.HIGHROLLER_WEAR;
         if (this.slip > 0.3) mul *= PHYS.SLIP.wear;
-        if (this.drifting) mul *= 1.5;   // sliding eats tyres
         this.tyre = Math.max(0, this.tyre - (100 / T.life) * load * corner * mul * dt);
       }
     }

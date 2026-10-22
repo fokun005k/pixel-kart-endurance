@@ -81,15 +81,6 @@ export const PHYS = {
   RPM_IDLE: 2000, RPM_RED: 12000,
   SHIFT_TIME: 0.15,                                // power cut while shifting
   AT_UP: 0.96, AT_DOWN: 0.66,                      // shift points (fraction of gear top)
-
-  // ---- handbrake drift (angles in radians, rates in rad/s)
-  // tuned to be forgiving: gentle rotation, capped angle, the kart keeps going where it points
-  DRIFT: {
-    minSpeed: 7, minSteer: 0.05, flick: 0.08, yaw: 1.35, follow: 1.35, followRelease: 3.2, maxSlip: 0.6,
-    drag: 1.5, dragRelease: 0.6, slipDrag: 5, brake: 6, chargeSlip: 0.14, charge1: 0.5, charge2: 1.2,
-  },
-  DRIFT_BOOST1: { amt: 0.15, dur: 0.7, accel: 1.8, kick: 2.5 },
-  DRIFT_BOOST2: { amt: 0.25, dur: 1.1, accel: 2.0, kick: 3.5 },
 };
 
 // ---------------- Tyres ----------------

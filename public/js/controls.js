@@ -9,7 +9,6 @@ export const ACTIONS = [
   { id: 'brake', label: 'ブレーキ / バック' },
   { id: 'left', label: 'ハンドル 左' },
   { id: 'right', label: 'ハンドル 右' },
-  { id: 'drift', label: 'サイドブレーキ（ドリフト）' },
   { id: 'skill', label: 'スキル発動' },
   { id: 'respawn', label: 'コースに復帰' },
   { id: 'pause', label: 'メニューを開く' },
@@ -21,7 +20,6 @@ export const DEFAULT_KEYS = {
   brake: ['KeyS', 'ArrowDown'],
   left: ['KeyA', 'ArrowLeft'],
   right: ['KeyD', 'ArrowRight'],
-  drift: ['ShiftLeft', 'Mouse2'],
   skill: ['Space', null],
   respawn: ['KeyR', null],
   pause: ['Escape', null],
@@ -129,7 +127,6 @@ export class KeyBindings {
 export const TOUCH_ITEMS = [
   { id: 'accel', label: 'ACCEL', base: 1.3 },
   { id: 'brake', label: 'BRAKE', base: 1 },
-  { id: 'drift', label: 'DRIFT', base: 1 },
   { id: 'skill', label: 'SKILL', base: 1 },
   { id: 'left', label: '◀', base: 1.1, steerButtons: true },
   { id: 'right', label: '▶', base: 1.1, steerButtons: true },
@@ -143,7 +140,6 @@ export const DEFAULT_LAYOUT = {
   items: {
     accel: { x: 0.925, y: 0.83, s: 1 },
     brake: { x: 0.80, y: 0.86, s: 1 },
-    drift: { x: 0.80, y: 0.62, s: 1 },
     skill: { x: 0.93, y: 0.55, s: 1 },
     left: { x: 0.08, y: 0.80, s: 1 },
     right: { x: 0.22, y: 0.80, s: 1 },

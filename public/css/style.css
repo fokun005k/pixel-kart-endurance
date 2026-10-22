@@ -151,12 +151,6 @@ body.touch.racing #touch-ui { display: block; }
   right: calc(var(--tc-edge) + var(--tc-accel) + var(--tc-gap));
   background: rgba(170, 40, 30, 0.75);
 }
-#tc-hbrake {
-  right: calc(var(--tc-edge) + var(--tc-accel) + var(--tc-gap));
-  bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--tc-btn) + var(--tc-gap));
-  background: rgba(150, 70, 180, 0.75);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
 .tc-btn small { font-size: 0.7em; opacity: 0.85; }
 .tc-btn.down { transform: translate(3px, 3px); box-shadow: 1px 1px 0 #000; filter: brightness(1.4); }
 

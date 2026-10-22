@@ -156,7 +156,6 @@ export class Settings {
     ul.innerHTML = `
       <li>${d('accel')} アクセル　${d('brake')} ブレーキ・バック</li>
       <li>${d('left')} / ${d('right')} ハンドル</li>
-      <li>${d('drift')} サイドブレーキ（曲がりながら押すとドリフト、離すとミニターボ）</li>
       <li>${d('skill')} アクティブスキル発動</li>
       <li><b>1 / 2 / 3</b> ピットでタイヤ選択（ソフト / ミディアム / ハード）</li>
       <li>${d('respawn')} コースに復帰　${d('mute')} ミュート　${d('pause')} メニュー</li>

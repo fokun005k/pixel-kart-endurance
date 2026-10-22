@@ -1,7 +1,7 @@
 // ============================================================
 //  Smartphone / tablet controls
 //  * steering: slide on the left half of the screen, or ◀ ▶ buttons
-//  * ACCEL / BRAKE / DRIFT / SKILL / menu buttons at user-defined positions
+//  * ACCEL / BRAKE / SKILL / menu buttons at user-defined positions
 //  * layout editor: drag buttons, change size & opacity
 // ============================================================
 import { TOUCH_ITEMS } from './controls.js';
@@ -17,7 +17,7 @@ export function isTouchDevice() {
 
 // element for each layout item
 const ELEMENT_ID = {
-  accel: 'tc-accel', brake: 'tc-brake', drift: 'tc-hbrake', skill: 'skill-btn',
+  accel: 'tc-accel', brake: 'tc-brake', skill: 'skill-btn',
   left: 'tc-left', right: 'tc-right', menu: 'tc-menu-group',
 };
 
@@ -31,7 +31,6 @@ export class TouchControls {
     this.slideSteer = 0;
     this.accel = false;
     this.brake = false;
-    this.hbrake = false;
     this.leftDown = false;
     this.rightDown = false;
     this.autoAccel = true;
@@ -100,7 +99,7 @@ export class TouchControls {
     window.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' && this._steerId === 'mouse') setSteer(e.clientX - x0); });
     window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && this._steerId === 'mouse') this._endSteer(); });
 
-    // ---- hold buttons (accel, brake, drift, ◀ ▶)
+    // ---- hold buttons (accel, brake, ◀ ▶)
     this._holds = [];
     const hold = (el, key) => {
       const st = { el, key, id: null };
@@ -121,7 +120,6 @@ export class TouchControls {
     };
     hold($('tc-accel'), 'accel');
     hold($('tc-brake'), 'brake');
-    hold($('tc-hbrake'), 'hbrake');
     hold($('tc-left'), 'leftDown');
     hold($('tc-right'), 'rightDown');
 
@@ -294,7 +292,6 @@ export class TouchControls {
     this.slideSteer = 0;
     this.accel = false;
     this.brake = false;
-    this.hbrake = false;
     this.leftDown = false;
     this.rightDown = false;
   }

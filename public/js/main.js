@@ -374,14 +374,13 @@ function held(action) {
 }
 
 function readInput() {
-  if (ui.paused || settings.busy) return { throttle: 0, brake: 0, steer: 0, handbrake: false };
+  if (ui.paused || settings.busy) return { throttle: 0, brake: 0, steer: 0 };
   const brake = (held('brake') || touch.brake) ? 1 : 0;
   let throttle = (held('accel') || touch.accel) ? 1 : 0;
   // smartphone auto-accelerate (paused while the pit menu is open so the kart can stay in the box)
   if (touch.enabled && touch.autoAccel && !brake && G.me && G.me.pit.state !== 'menu' && G.me.pit.state !== 'work') throttle = 1;
   const keySteer = (held('right') ? 1 : 0) - (held('left') ? 1 : 0);
-  const handbrake = held('drift') || touch.hbrake;
-  return { throttle, brake, steer: keySteer || touch.steer, handbrake };
+  return { throttle, brake, steer: keySteer || touch.steer };
 }
 
 function pitChoose(t) {
@@ -751,13 +750,6 @@ function handleKartEvent(e, time) {
     case 'shift':
       sound.sfx('shift');
       break;
-    case 'driftStart':
-      sound.sfx('driftStart');
-      break;
-    case 'driftBoost':
-      sound.sfx('driftBoost', { level: e.level });
-      hud.message(e.level > 1 ? 'SUPER MINI TURBO!' : 'MINI TURBO!', e.level > 1 ? '#ff9a2a' : '#5ab4ff', 1.1, 4);
-      break;
     case 'landBoost':
       sound.sfx('dash');
       hud.message('LANDING DASH!', '#7cf0ff', 1, 4);
@@ -927,11 +919,6 @@ function buildHudState(remaining, cd, time) {
     rpm: me.rpm,
     rpmValue: me.rpmValue,
     skillKey: bindings.describe('skill', true),
-    drift: me.drifting ? {
-      charge: me.driftCharge / PHYS.DRIFT.charge2,
-      mark1: PHYS.DRIFT.charge1 / PHYS.DRIFT.charge2,
-      level: me.driftCharge >= PHYS.DRIFT.charge2 ? 2 : me.driftCharge >= PHYS.DRIFT.charge1 ? 1 : 0,
-    } : null,
     boost: me.boostT > 0,
     limiter: me.limiter,
     tyreType: me.tyreType,

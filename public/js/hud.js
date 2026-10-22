@@ -160,7 +160,6 @@ export class Hud {
     this._drawSpeed(st, time);
     this._drawTyre(st, time);
     this._drawSkill(st, time);
-    if (st.drift) this._drawDrift(st.drift, time);
     if (st.pitInfo) this._drawPit(st.pitInfo, time);
     if (st.countdown !== null) this._drawCountdown(st.countdown);
     this._drawMessages(dt);
@@ -308,23 +307,6 @@ export class Hud {
     drawText(g, 'GEAR', x + 39, y + 114, 1, '#ffd23b', 'center');
     drawText(g, spd, x + w - 12, y + 46, 7, st.boost ? '#7cf0ff' : '#ffffff', 'right');
     drawText(g, 'KM/H', x + w - 12, y + 102, 2, '#a8c8ff', 'right');
-  }
-
-  _drawDrift(d, time) {
-    const g = this.g;
-    const cx = HUD_W / 2, y = 318;
-    const col = d.level >= 2 ? '#ff9a2a' : d.level >= 1 ? '#5ab4ff' : '#ffffff';
-    const pulse = d.level > 0 && Math.floor(time * 10) % 2 === 0;
-    drawText(g, 'DRIFT', cx, y, 3, pulse ? '#ffffff' : col, 'center');
-    const bw = 170, by = y + 26;
-    g.fillStyle = 'rgba(0,0,0,0.6)';
-    g.fillRect(cx - bw / 2, by, bw, 10);
-    g.fillStyle = col;
-    g.fillRect(cx - bw / 2 + 2, by + 2, Math.round((bw - 4) * Math.min(1, d.charge)), 6);
-    // level marks
-    g.fillStyle = '#ffffff';
-    g.fillRect(Math.round(cx - bw / 2 + (bw - 4) * d.mark1), by - 2, 2, 14);
-    g.fillRect(Math.round(cx + bw / 2 - 4), by - 2, 2, 14);
   }
 
   _drawTyre(st, time) {
