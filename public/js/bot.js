@@ -25,8 +25,8 @@ export class BotDriver {
     this.serviceDelay = 0;
   }
 
-  /** returns {throttle, brake, steer} */
-  input(dt, remaining, active) {
+  /** returns {throttle, brake, steer}. wet = track wetness 0..1 */
+  input(dt, remaining, active, wet = 0) {
     const k = this.k, t = this.t, q = k.q;
     if (!q) return { throttle: 1, brake: 0, steer: 0 };
     const speed = k.vf;
@@ -38,12 +38,16 @@ export class BotDriver {
     }
     this.lane += (this.laneTarget - this.lane) * Math.min(1, dt * 0.6);
 
-    // ---- pit decisions
-    if (this.mode === 'race' && k.tyre < 22 && remaining > 30 && q.u > -480 && q.u < -170) this.mode = 'pitIn';
+    // ---- pit decisions: worn tyres, or the wrong tyres for the weather (after a while)
+    const onWets = !!TYRES[k.tyreType].wet;
+    const wrongTyres = (wet > 0.45 && !onWets) || (wet < 0.15 && onWets);
+    this.wrongT = wrongTyres ? (this.wrongT || 0) + dt : 0;
+    const wantPit = k.tyre < 22 || this.wrongT > 6;
+    if (this.mode === 'race' && wantPit && remaining > 30 && q.u > -480 && q.u < -170) this.mode = 'pitIn';
     if (k.pit.state === 'menu' && this.mode === 'pitIn') {
       this.serviceDelay += dt;
       if (this.serviceDelay > 0.4) {
-        const choice = remaining > 420 ? 'H' : remaining > 200 ? 'M' : 'S';
+        const choice = wet > 0.35 ? 'W' : remaining > 420 ? 'H' : remaining > 200 ? 'M' : 'S';
         k.startPitWork(choice);
         this.mode = 'service';
         this.serviceDelay = 0;
@@ -83,7 +87,8 @@ export class BotDriver {
     // ---- corner speed
     const T = TYRES[k.tyreType];
     const cond = Math.max(0, k.tyre) / 100;
-    const grip = T.grip * (k.tyre <= 0 ? 0.42 : 0.62 + 0.38 * cond);
+    let grip = T.grip * (k.tyre <= 0 ? 0.42 : 0.62 + 0.38 * cond);
+    grip *= T.wet ? 1 - PHYS.WET_DRY_GRIP * (1 - wet) : 1 - PHYS.WET_SLICK_GRIP * wet;
     const curv = t.curvatureAhead(q.i, 12 + Math.max(0, speed) * 1.4);
     const cornerV = curv > 1e-4 ? Math.sqrt((PHYS.LAT_ACC * grip * this.pace) / curv) : Infinity;
     const vt = Math.min(speedCap, cornerV);

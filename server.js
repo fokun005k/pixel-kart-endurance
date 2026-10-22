@@ -28,13 +28,13 @@ app.get('/api/info', (_req, res) => {
 
 const MAX_ROOMS = 200;
 const MAX_PLAYERS = 8;
-const COURSE_COUNT = 6;                    // must match public/js/courses.js
+const COURSE_COUNT = 7;                    // must match public/js/courses.js
 const DURATIONS = [60, 300, 900];          // 60 = dev only (?dev=1)
 const COUNTDOWN_MS = 5000;                 // READY(2s) + 3,2,1
 const TICK_MS = 50;                        // 20Hz snapshots
-const TYRES = ['S', 'M', 'H'];
+const TYRES = ['S', 'M', 'H', 'W'];
 const SKILLS = ['meister', 'junkie', 'offroader', 'sliphunter', 'quickpit',
-  'nitro', 'smoke', 'aerojump', 'overclock', 'highroller'];
+  'nitro', 'smoke', 'aerojump', 'overclock', 'highroller', 'jammer'];
 const BOT_SKILLS = ['meister', 'junkie', 'sliphunter', 'overclock', 'highroller'];
 
 /** @type {Map<string, any>} */
@@ -77,9 +77,12 @@ function lobbyView(room) {
     duration: room.duration,
     course: room.course,
     night: room.night,
+    weather: room.weather,
+    noSkills: room.noSkills,
     status: room.status,
     players: [...room.players.values()].map(p => ({
       id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, color: p.color, isBot: p.isBot,
+      ready: p.isBot || p.ready,
     })),
   };
 }
@@ -88,14 +91,51 @@ function broadcastLobby(room) {
   io.to(room.id).emit('lobby', lobbyView(room));
 }
 
+// guests who are not ready yet (the host's START press is the final OK)
+function notReady(room) {
+  return humans(room).filter(p => p.id !== room.hostId && !p.ready);
+}
+
+// rules changed: everyone has to confirm again
+function resetReady(room) {
+  for (const p of room.players.values()) p.ready = false;
+}
+
 function makePlayer(id, name, room, isBot = false) {
   return {
     id, name, isBot,
     tyre: isBot ? 'M' : 'M',
     skill: isBot ? BOT_SKILLS[Math.floor(Math.random() * BOT_SKILLS.length)] : 'meister',
     color: freeColor(room),
+    ready: false,
     state: null,
   };
+}
+
+// ------------------------------------------------------------
+//  Weather: mostly sunny, with the occasional shower or fog bank.
+//  Returns [{type: 'rain'|'fog', start, end}] in seconds from the green light;
+//  clients fade each event in/out and integrate track wetness themselves.
+// ------------------------------------------------------------
+function rnd(a, b) { return a + Math.random() * (b - a); }
+
+function genWeather(duration) {
+  let count;
+  if (duration <= 60) count = 1;                         // dev races: always show something
+  else if (duration <= 300) count = Math.random() < 0.55 ? 1 : 0;
+  else count = Math.random() < 0.15 ? 0 : Math.random() < 0.6 ? 1 : 2;
+  const events = [];
+  // one event per equal slice of the race, so events never overlap
+  const slice = duration / Math.max(1, count);
+  for (let i = 0; i < count; i++) {
+    const type = Math.random() < 0.6 ? 'rain' : 'fog';
+    const lo = i * slice, hi = (i + 1) * slice;
+    let len = duration <= 60 ? 35 : type === 'rain' ? rnd(70, 150) : rnd(50, 100);
+    len = Math.min(len, hi - lo - 20);
+    const start = duration <= 60 ? 8 : rnd(lo + Math.min(40, slice * 0.2), Math.max(lo + 20, hi - len - 10));
+    events.push({ type, start: Math.round(start), end: Math.round(Math.min(duration - 5, start + len)) });
+  }
+  return events;
 }
 
 function sanitizeState(s) {
@@ -124,6 +164,7 @@ function startRace(room) {
     endAt: room.endAt,
     duration: room.duration,
     grid,
+    weather: room.weather ? genWeather(room.duration) : [],
     room: lobbyView(room),
   });
 }
@@ -142,6 +183,7 @@ function endRace(room) {
   })).sort((a, b) => b.dist - a.dist);
   io.to(room.id).emit('raceEnd', { results });
   for (const p of room.players.values()) p.state = null;
+  resetReady(room);
   broadcastLobby(room);
 }
 
@@ -195,6 +237,8 @@ io.on('connection', (socket) => {
       duration: 300,
       course: 0,
       night: false,
+      weather: true,       // random rain / fog during the race
+      noSkills: false,     // everyone races without skills
       status: 'lobby',
       players: new Map(),
       startAt: 0,
@@ -232,38 +276,47 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.data.roomId);
     if (!room || room.status !== 'lobby' || !data) return;
     const p = room.players.get(socket.id);
-    if (!p) return;
+    if (!p || p.ready) return;          // choices are locked while READY
     if (TYRES.includes(data.tyre)) p.tyre = data.tyre;
     if (SKILLS.includes(data.skill)) p.skill = data.skill;
     broadcastLobby(room);
   });
 
-  socket.on('setDuration', (sec) => {
+  socket.on('setReady', (on) => {
     const room = rooms.get(socket.data.roomId);
-    if (!room || room.hostId !== socket.id || room.status !== 'lobby') return;
+    if (!room || room.status !== 'lobby') return;
+    const p = room.players.get(socket.id);
+    if (!p) return;
+    p.ready = !!on;
+    broadcastLobby(room);
+  });
+
+  // host-only race rules. Any change sends the guests back to "not ready".
+  const hostRoom = () => {
+    const room = rooms.get(socket.data.roomId);
+    return room && room.hostId === socket.id && room.status === 'lobby' ? room : null;
+  };
+  const setRule = (key, value) => {
+    const room = hostRoom();
+    if (!room || room[key] === value) return;
+    room[key] = value;
+    resetReady(room);
+    broadcastLobby(room);
+  };
+
+  socket.on('setDuration', (sec) => {
     const d = Number(sec);
-    if (DURATIONS.includes(d)) {
-      room.duration = d;
-      broadcastLobby(room);
-    }
+    if (DURATIONS.includes(d)) setRule('duration', d);
   });
 
   socket.on('setCourse', (id) => {
-    const room = rooms.get(socket.data.roomId);
-    if (!room || room.hostId !== socket.id || room.status !== 'lobby') return;
     const c = Number(id);
-    if (Number.isInteger(c) && c >= 0 && c < COURSE_COUNT) {
-      room.course = c;
-      broadcastLobby(room);
-    }
+    if (Number.isInteger(c) && c >= 0 && c < COURSE_COUNT) setRule('course', c);
   });
 
-  socket.on('setNight', (on) => {
-    const room = rooms.get(socket.data.roomId);
-    if (!room || room.hostId !== socket.id || room.status !== 'lobby') return;
-    room.night = !!on;
-    broadcastLobby(room);
-  });
+  socket.on('setNight', (on) => setRule('night', !!on));
+  socket.on('setWeather', (on) => setRule('weather', !!on));
+  socket.on('setNoSkills', (on) => setRule('noSkills', !!on));
 
   socket.on('addBot', () => {
     const room = rooms.get(socket.data.roomId);
@@ -285,10 +338,16 @@ io.on('connection', (socket) => {
     broadcastLobby(room);
   });
 
-  socket.on('startRace', () => {
-    const room = rooms.get(socket.data.roomId);
-    if (!room || room.hostId !== socket.id || room.status !== 'lobby') return;
+  socket.on('startRace', (_data, cb) => {
+    const room = hostRoom();
+    if (!room) return;
+    const waiting = notReady(room);
+    if (waiting.length) {
+      if (typeof cb === 'function') cb({ ok: false, error: `${waiting.map(p => p.name).join('、')} の準備OK待ちです` });
+      return;
+    }
     startRace(room);
+    if (typeof cb === 'function') cb({ ok: true });
   });
 
   socket.on('state', (s) => {
@@ -311,13 +370,20 @@ io.on('connection', (socket) => {
     }
   });
 
-  // active skill events (smoke screen, nitro flame, jump...) relayed to everyone else
+  // active skill events (smoke screen, nitro flame, jump, jammer...) relayed to everyone else
   socket.on('skill', (evt) => {
     const room = rooms.get(socket.data.roomId);
-    if (!room || room.status === 'lobby' || !evt) return;
+    if (!room || room.status === 'lobby' || room.noSkills || !evt) return;
+    const p = room.players.get(socket.id);
     const type = String(evt.type || '');
-    if (!['nitro', 'smoke', 'aerojump'].includes(type)) return;
-    socket.to(room.id).emit('skill', { id: socket.id, type });
+    if (!p || p.skill !== type || !['nitro', 'smoke', 'aerojump', 'jammer'].includes(type)) return;
+    const out = { id: socket.id, type };
+    if (type === 'jammer') {
+      const target = String(evt.target || '');
+      if (target === socket.id || !room.players.has(target)) return;
+      out.target = target;
+    }
+    socket.to(room.id).emit('skill', out);
   });
 
   socket.on('disconnect', () => leaveRoom(socket));

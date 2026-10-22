@@ -116,14 +116,15 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
   scene.add(sun);
 
   // ---- sky & horizon
+  // (transparent so that rain / fog can fade them into the fog colour)
   const sky = new THREE.Mesh(new THREE.SphereGeometry(1100, 32, 16),
-    basicMat(night ? TX.skyNightTex() : TX.skyTex(), { side: THREE.BackSide, fog: false, depthWrite: false }));
+    basicMat(night ? TX.skyNightTex() : TX.skyTex(), { side: THREE.BackSide, fog: false, depthWrite: false, transparent: true }));
   sky.renderOrder = -10;
   scene.add(sky);
   const mtnTex = cloneTex(TX.mountainTex(theme));
   mtnTex.repeat.set(4, 1);
   const mtn = new THREE.Mesh(new THREE.CylinderGeometry(1000, 1000, 170, 64, 1, true),
-    basicMat(mtnTex, { color: night ? 0x262c44 : 0xffffff, side: THREE.BackSide, fog: false, transparent: true, alphaTest: 0.5, depthWrite: false }));
+    basicMat(mtnTex, { color: night ? 0x262c44 : 0xffffff, side: THREE.BackSide, fog: false, transparent: true, alphaTest: 0.02, depthWrite: false }));
   mtn.position.y = 55;
   mtn.renderOrder = -9;
   scene.add(mtn);
@@ -236,9 +237,43 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
   buildTrees(scene, track, T, night);
   if (night) buildLamps(scene, track);
 
+  // ---- weather: unlit surfaces get darker, the lights dim, the sky fades into grey
+  const dimmable = new Map();   // material -> base colour
+  scene.traverse((o) => {
+    if (o === sky || o === mtn || gantry.lights.includes(o)) return;   // start lights are driven by the race
+    const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const m of mats) {
+      if (!m.color || m.blending === THREE.AdditiveBlending || dimmable.has(m)) continue;
+      if (m.isMeshBasicMaterial || m.isSpriteMaterial) dimmable.set(m, m.color.clone());
+    }
+  });
+  const baseFog = new THREE.Color(fogColor);
+  const rainFog = new THREE.Color(night ? 0x10141e : 0x7d8794);
+  const fogFog = new THREE.Color(night ? 0x283040 : 0xc4c9cf);
+  const hemiI = hemi.intensity, sunI = sun.intensity;
+  let lastWx = '';
+
   return {
     scene, dashTex, gantryLights: gantry.lights, night, theme,
     fogNear: scene.fog.near, fogFar: scene.fog.far,
+    /** rain, fog: 0..1 (fog distances are set by the caller) */
+    setWeather(rain, fog) {
+      const key = `${rain.toFixed(2)}|${fog.toFixed(2)}`;
+      if (key === lastWx) return;
+      lastWx = key;
+      const dim = 1 - (night ? 0.25 : 0.4) * rain - (night ? 0.1 : 0.12) * fog;
+      for (const [m, base] of dimmable) m.color.copy(base).multiplyScalar(dim);
+      hemi.intensity = hemiI * dim;
+      sun.intensity = sunI * (1 - 0.75 * Math.min(1, rain + fog));
+      const c = baseFog.clone().lerp(rainFog, rain).lerp(fogFog, fog);
+      scene.fog.color.copy(c);
+      scene.background.copy(c);
+      sky.material.color.setScalar(1 - 0.45 * rain);
+      sky.material.opacity = Math.max(0, 1 - 0.45 * rain - 0.95 * fog);
+      mtn.material.opacity = Math.max(0, 1 - 0.3 * rain - fog);
+      sky.visible = sky.material.opacity > 0.01;
+      mtn.visible = mtn.material.opacity > 0.01;
+    },
     dispose() {
       scene.traverse((o) => {
         if (o.geometry) o.geometry.dispose();

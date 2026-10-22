@@ -122,18 +122,34 @@
         <div class="col wide">
           <h2>コース <small id="course-note"></small></h2>
           <div id="course-select" class="course-grid"></div>
-          <h2>時間帯</h2>
-          <div id="time-select" class="seg"></div>
+          <div class="rule-row">
+            <div>
+              <h2>時間帯</h2>
+              <div id="time-select" class="seg"></div>
+            </div>
+            <div>
+              <h2>天候</h2>
+              <div id="weather-select" class="seg"></div>
+            </div>
+            <div>
+              <h2>個性ルール</h2>
+              <div id="skillrule-select" class="seg"></div>
+            </div>
+          </div>
+          <p id="rule-note" class="note"></p>
           <h2>初期タイヤ</h2>
           <div id="tyre-select" class="tyre-cards"></div>
           <h2>個性（スキル）</h2>
+          <p id="noskill-note" class="note warn hidden">個性なしモード：全員スキルなしで走ります（純粋な腕とタイヤ戦略の勝負）</p>
           <div id="skill-select" class="skill-grid"></div>
         </div>
       </div>
 
       <div class="lobby-foot">
+        <span id="ready-status" class="ready-status"></span>
         <button id="btn-start" class="btn big host-only" type="button">レース開始！</button>
-        <span id="wait-msg" class="guest-only blink">ホストの開始を待っています…</span>
+        <button id="btn-ready" class="btn big guest-only" type="button">準備OK！</button>
+        <span id="wait-msg" class="guest-only"></span>
       </div>
     </div>
   </section>
@@ -146,7 +162,7 @@
       <div id="pit-choices" class="tyre-cards compact"></div>
       <div id="pit-actions" class="pit-actions">
         <button id="btn-pit-skip" class="btn small" type="button">交換せずに出発</button>
-        <span class="note desktop-only">数字キー <b>1</b>/<b>2</b>/<b>3</b> でも選択 ・ アクセルでも出発</span>
+        <span class="note desktop-only">数字キー <b>1</b>〜<b>4</b> でも選択 ・ アクセルでも出発</span>
       </div>
       <div id="pit-progress" class="pit-progress hidden">
         <div class="bar"><div id="pit-bar"></div></div>

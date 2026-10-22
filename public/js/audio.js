@@ -312,10 +312,12 @@ class SoundEngine {
     e.squeal.start();
     e.dirt = loop('lowpass', 900, 1);
     e.wind = loop('bandpass', 800, 1.2);
+    e.rain = loop('highpass', 2600, 0.4);     // rainfall
+    e.hiss = loop('bandpass', 1300, 0.9);     // tyres on standing water
     this.engine = e;
   }
 
-  updateEngine({ speedFrac = 0, throttle = 0, boost = false, skid = 0, dirt = 0, wind = 0 }) {
+  updateEngine({ speedFrac = 0, throttle = 0, boost = false, skid = 0, dirt = 0, wind = 0, rain = 0, spray = 0 }) {
     const e = this.engine;
     if (!e) return;
     const t = this.ctx.currentTime;
@@ -333,6 +335,8 @@ class SoundEngine {
     e.dirt.g.gain.setTargetAtTime(dirt * (0.12 + Math.random() * 0.18), t, 0.015);
     e.wind.g.gain.setTargetAtTime(0.12 * wind, t, 0.1);
     e.wind.f.frequency.setTargetAtTime(600 + 700 * wind + Math.random() * 200, t, 0.1);
+    e.rain.g.gain.setTargetAtTime(rain * (0.05 + Math.random() * 0.03), t, 0.04);
+    e.hiss.g.gain.setTargetAtTime(0.1 * spray, t, 0.08);
   }
 
   stopEngine() {
@@ -341,12 +345,14 @@ class SoundEngine {
     this.engine = null;
     const t = this.ctx.currentTime;
     e.gain.gain.setTargetAtTime(0, t, 0.05);
-    for (const n of [e.o1, e.o2, e.lfo, e.squeal, e.skid.src, e.dirt.src, e.wind.src]) {
+    for (const n of [e.o1, e.o2, e.lfo, e.squeal, e.skid.src, e.dirt.src, e.wind.src, e.rain.src, e.hiss.src]) {
       try { n.stop(t + 0.3); } catch { /* already stopped */ }
     }
     e.skid.g.gain.setTargetAtTime(0, t, 0.03);
     e.dirt.g.gain.setTargetAtTime(0, t, 0.03);
     e.wind.g.gain.setTargetAtTime(0, t, 0.03);
+    e.rain.g.gain.setTargetAtTime(0, t, 0.03);
+    e.hiss.g.gain.setTargetAtTime(0, t, 0.03);
     e.squealGain.gain.setTargetAtTime(0, t, 0.03);
   }
 
@@ -384,6 +390,24 @@ class SoundEngine {
       case 'aerojump':
         this.tone(t, 220, 0.3, 'square', 0.18, B, { slideTo: 1100 });
         this._arp(t, [880, 1175, 1760], 0.05, 'p12', 0.1);
+        break;
+      case 'jammer':
+        // radio jamming burst
+        for (let k = 0; k < 6; k++) this.tone(t + k * 0.05, k % 2 ? 1800 : 600, 0.045, 'square', 0.1, B);
+        this.noiseHit(t, 0.5, 0.2, B, { type: 'bandpass', freq: 2500, freqTo: 600, q: 3 });
+        break;
+      case 'jammed':
+        this.noiseHit(t, 0.6, 0.3, B, { type: 'bandpass', freq: 1200, freqTo: 300, q: 2 });
+        this.tone(t, 880, 0.5, 'p12', 0.12, B, { slideTo: 110 });
+        break;
+      case 'unjammed':
+        this._arp(t, [523, 784, 1046], 0.06, 'p25', 0.1);
+        break;
+      case 'weather':
+        this._arp(t, [988, 784, 988, 784], 0.12, 'triangle', 0.1);
+        break;
+      case 'ready':
+        this._arp(t, [784, 1175], 0.07, 'p25', 0.14);
         break;
       case 'land':
         this.tone(t, 130, 0.16, 'sine', 0.35, B, { slideTo: 45 });

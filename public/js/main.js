@@ -16,7 +16,8 @@ import { Hud, fmtLap } from './hud.js';
 import { sound } from './audio.js';
 import { Net } from './net.js';
 import { UI } from './ui.js';
-import { SmokeSystem } from './effects.js';
+import { SmokeSystem, SpraySystem } from './effects.js';
+import { Weather } from './weather.js';
 import { mulberry32 } from './textures.js';
 import { TouchControls } from './touch.js';
 import { KeyBindings, TouchLayout } from './controls.js';
@@ -105,6 +106,7 @@ resize();
 const net = new Net();
 const hud = new Hud(hudCanvas, track);
 let smoke = null;
+let spray = null;
 
 /** Build (or reuse) the 3D world for a course and time of day. */
 function loadEnvironment(courseId, night) {
@@ -120,6 +122,7 @@ function loadEnvironment(courseId, night) {
   FOG_NEAR = world.fogNear;
   FOG_FAR = world.fogFar;
   smoke = new SmokeSystem(scene);
+  spray = new SpraySystem(scene);
   hud.setTrack(track);
   headBeam = null;
   if (night) {
@@ -208,9 +211,19 @@ const ui = new UI({
   onDuration(sec) { net.setDuration(sec); },
   onCourse(id) { net.setCourse(id); },
   onNight(on) { net.setNight(on); },
+  onWeather(on) { net.setWeather(on); },
+  onNoSkills(on) { net.setNoSkills(on); },
+  onReady(on) {
+    if (on) net.updatePlayer(G.sel);   // make sure the server has the final choice
+    net.setReady(on);
+    if (on) sound.sfx('ready');
+  },
   onAddBot() { net.addBot(); },
   onRemoveBot() { net.removeBot(); },
-  onStart() { net.startRace(); },
+  async onStart() {
+    const res = await net.startRace();
+    if (res && !res.ok) { sound.sfx('error'); ui.toast(res.error || '開始できませんでした', 2500); }
+  },
   onBackToLobby() {
     if (G.room) enterLobby(); else goTitle();
   },
@@ -294,8 +307,21 @@ net.on('snapshot', (snap) => {
     r.recvAt = now;
   }
 });
-net.on('skill', ({ id, type }) => {
+net.on('skill', ({ id, type, target }) => {
+  if (G.phase !== 'race' || !G.race) return;
   const r = G.remotes.get(id);
+  if (type === 'jammer') {
+    const by = r ? r.info.name : '???';
+    if (target === G.myId && G.me) {
+      G.race.jamBy = by;
+      G.me.jam(PHYS.JAMMER.dur);
+    } else if (G.bots.has(target)) {
+      G.bots.get(target).kart.jam(PHYS.JAMMER.dur);   // host-simulated CPU
+    } else if (G.remotes.has(target)) {
+      G.remotes.get(target).smokeT = 0;                 // its smoke screen is cut
+    }
+    return;
+  }
   if (!r) return;
   if (type === 'smoke') r.smokeT = PHYS.SMOKE_EMIT;
   if (type === 'nitro') r.nitroT = 3;
@@ -325,7 +351,10 @@ net.on('disconnect', () => {
 // held inputs: keyboard codes ("KeyW") and mouse buttons ("Mouse2")
 const keys = new Set();
 let skillQueued = false;
-const PIT_KEYS = { Digit1: 'S', Digit2: 'M', Digit3: 'H', Numpad1: 'S', Numpad2: 'M', Numpad3: 'H' };
+const PIT_KEYS = {
+  Digit1: 'S', Digit2: 'M', Digit3: 'H', Digit4: 'W',
+  Numpad1: 'S', Numpad2: 'M', Numpad3: 'H', Numpad4: 'W',
+};
 
 /** one-shot actions (skill, respawn, menu, mute) for a pressed key or mouse button */
 function pressAction(code) {
@@ -472,6 +501,8 @@ function clearRace() {
   G.me = null;
   G.race = null;
   smoke.clear();
+  spray.clear();
+  world.setWeather(0, 0);
   G.smokeVision = 0;
   scene.fog.near = FOG_NEAR;
   scene.fog.far = FOG_FAR;
@@ -500,11 +531,15 @@ function startRace(data) {
   G.race = {
     startAt: data.startAt, endAt: data.endAt, duration: data.duration,
     acc: 0, sendAcc: 0, active: false, finished: false,
-    lastCount: null, goPlayed: false, spurtOn: false, lowWarned: false,
+    lastCount: null, goPlayed: false, spurtOn: false, ocOn: false, lowWarned: false,
     lastBump: 0, wrenchT: 0, wrongWayT: 0, skillWasReady: true,
+    weather: new Weather(data.weather), wxAnnounced: new Set(), wxState: 'sun', tyreHint: '',
+    jamBy: '', jamTarget: null,
   };
+  // "no skills" rule: everybody races with skill 'none'
+  const skillOf = id => (G.room.noSkills ? 'none' : id);
 
-  const me = new Kart(track, { id: G.myId, skill: G.sel.skill, tyreType: G.sel.tyre });
+  const me = new Kart(track, { id: G.myId, skill: skillOf(G.sel.skill), tyreType: G.sel.tyre });
   const sl = track.slot(slotOf(G.myId));
   me.placeAt(sl.dist, sl.d);
   G.me = me;
@@ -522,7 +557,7 @@ function startRace(data) {
       if (!isHost) {
         // simulated by the host; we only display it
       } else {
-        const k = new Kart(track, { id: p.id, skill: p.skill, tyreType: p.tyre });
+        const k = new Kart(track, { id: p.id, skill: skillOf(p.skill), tyreType: p.tyre });
         k.placeAt(slot.dist, slot.d);
         const driver = new BotDriver(k, track, mulberry32(hashStr(p.id)), botIdx++);
         G.bots.set(p.id, { info: p, kart: k, driver, model, input: { throttle: 0, brake: 0, steer: 0 } });
@@ -567,12 +602,61 @@ function finishRace(data) {
   }, 2800);
 }
 
-const SKILL_SHORT = { nitro: 'NITRO', smoke: 'SMOKE', aerojump: 'JUMP' };
+const SKILL_SHORT = { nitro: 'NITRO', smoke: 'SMOKE', aerojump: 'JUMP', jammer: 'JAM' };
 
-function spurtMulFor(skill, remaining, active) {
+/** Overclock kicks in for the last 25% of the race (at least the last 2 minutes) */
+function overclockTime(duration) {
+  return Math.max(PHYS.OVERCLOCK_MIN, duration * PHYS.OVERCLOCK_FRACTION);
+}
+
+function spurtMulFor(kart, remaining, active) {
   if (!active) return 1;
-  if (skill === 'overclock') return remaining <= PHYS.OVERCLOCK_TIME ? PHYS.OVERCLOCK_MUL : 1;
+  if (kart.effSkill === 'overclock' && remaining <= overclockTime(G.race.duration)) return PHYS.OVERCLOCK_MUL;
   return remaining <= PHYS.SPURT_TIME ? PHYS.SPURT_MUL : 1;
+}
+
+/** Skill Jammer target: the closest rival ahead in the race order, within range */
+function jamTarget() {
+  const me = G.me, L = track.length;
+  let best = null;
+  const consider = (id, name, dist) => {
+    const gap = (dist - me.totalDist) * L;
+    if (gap > 0 && gap <= PHYS.JAMMER.range && (!best || gap < best.gap)) best = { id, name, gap };
+  };
+  for (const [id, r] of G.remotes) consider(id, r.info.name, r.target.d);
+  for (const [id, b] of G.bots) consider(id, b.info.name, b.kart.totalDist);
+  return best;
+}
+
+/** weather for this frame: sky, forecasts and pit hints */
+function updateWeather(tRace) {
+  const race = G.race, wx = race.weather, me = G.me;
+  wx.update(tRace);
+  world.setWeather(wx.rain, wx.fog);
+  if (!wx.enabled) return;
+
+  const next = wx.upcoming(tRace);
+  const key = next ? next.type + Math.round(tRace + next.in) : '';
+  if (next && next.in <= 30 && !race.wxAnnounced.has(key)) {
+    race.wxAnnounced.add(key);
+    sound.sfx('weather');
+    hud.message(next.type === 'rain' ? 'RAIN IN 30S!' : 'FOG IN 30S!', next.type === 'rain' ? '#7cb8ff' : '#d0d4dc', 2.4, 4);
+  }
+  const state = wx.state();
+  if (state !== race.wxState) {
+    if (state === 'rain') hud.message('RAIN!', '#7cb8ff', 1.8, 6);
+    else if (state === 'fog') hud.message('FOG!', '#d0d4dc', 1.8, 6);
+    else if (race.wxState === 'rain' && state === 'wet') hud.message('RAIN STOPPED', '#ffffff', 1.6, 4);
+    else if (state === 'sun' && race.wxState === 'wet') hud.message('TRACK IS DRY', '#ffd23b', 1.8, 4);
+    race.wxState = state;
+  }
+  // tyre advice (once per change)
+  const onWets = !!TYRES[me.tyreType].wet;
+  const hint = wx.wet > 0.45 && !onWets ? 'wets' : wx.wet < 0.12 && onWets && tRace > 0 ? 'slicks' : '';
+  if (hint && hint !== race.tyreHint) {
+    hud.message(hint === 'wets' ? 'WET TRACK - PIT FOR WETS!' : 'DRY TRACK - PIT FOR SLICKS!', '#7cf0ff', 2.6, 3);
+  }
+  race.tyreHint = hint;
 }
 
 // ------------------------------------------------------------
@@ -610,34 +694,52 @@ function updateRace(dt, time) {
     world.gantryLights.forEach(l => l.material.color.setHex(0x0a3a10));
   }
 
-  // ---- last spurt (x1.1 from 30s / overclock x1.2 from 60s)
-  const mySpurt = spurtMulFor(me.skill, remaining, active);
-  if (mySpurt > 1 && !race.spurtOn) {
+  // ---- last spurt (everyone x1.1 for the last 30s) / overclock (x1.25, last 25% of the race)
+  const mySpurt = spurtMulFor(me, remaining, active);
+  if (active && remaining <= PHYS.SPURT_TIME && !race.spurtOn) {
     race.spurtOn = true;
     sound.setFast(true);
     sound.sfx('spurt');
-    hud.message(me.skill === 'overclock' ? 'OVERCLOCK X1.2!' : 'LAST SPURT X1.1!', '#ff4040', 2.8, 5);
+    if (!race.ocOn) hud.message('LAST SPURT X1.1!', '#ff4040', 2.8, 5);
   }
+  if (me.effSkill === 'overclock' && mySpurt > 1 && !race.ocOn) {
+    race.ocOn = true;
+    sound.sfx('spurt');
+    hud.message('OVERCLOCK X1.25!', '#ff4040', 2.8, 5);
+  }
+
+  updateWeather(tRace);
+  const wet = race.weather.wet;
 
   // ---- input & skills
   const inp = readInput();
+  const target = me.skill === 'jammer' ? jamTarget() : null;
   if (skillQueued) {
     skillQueued = false;
-    const fired = me.activateSkill(active);
-    if (fired) {
+    const fired = me.activateSkill(active, target);
+    if (fired === 'jammer') {
+      sound.sfx('jammer');
+      net.sendSkill('jammer', target.id);
+      if (G.bots.has(target.id)) G.bots.get(target.id).kart.jam(PHYS.JAMMER.dur);
+      hud.message(`JAMMED ${target.name.toUpperCase()}!`, '#ff70ff', 1.6, 3);
+    } else if (fired) {
       sound.sfx(fired);
       net.sendSkill(fired);
       hud.message(SKILL_BY_ID[fired].en + '!', '#ffb040', 1.2, 4);
     } else if (SKILL_BY_ID[me.skill].type === 'active' && active) {
       sound.sfx('error');
+      if (me.jamT > 0) hud.message('SKILL JAMMED!', '#ff70ff', 1, 3);
+      else if (me.skill === 'jammer' && me.skillCd <= 0 && !target) hud.message('NO TARGET', '#ffffff', 1, 3);
     }
   }
-  const ready = me.skillCd <= 0;
+  const ready = me.skillCd <= 0 && me.jamT <= 0;
   if (SKILL_BY_ID[me.skill].type === 'active') {
     if (ready && !race.skillWasReady) sound.sfx('skillReady');
-    ui.updateSkillButton(SKILL_SHORT[me.skill] || 'SKILL', me.skillCd, bindings.describe('skill', true));
+    if (me.jamT > 0) ui.updateSkillButton('JAMMED', me.jamT, '', true);
+    else ui.updateSkillButton(SKILL_SHORT[me.skill] || 'SKILL', me.skillCd, bindings.describe('skill', true));
   }
   race.skillWasReady = ready;
+  race.jamTarget = target;
   ui.setRotateHint(touch.enabled && window.innerHeight > window.innerWidth);
 
   // ---- collect other karts for collisions / slipstream
@@ -645,17 +747,17 @@ function updateRace(dt, time) {
   const botKarts = [...G.bots.values()].map(b => b.kart);
   const othersForMe = remoteDisps.concat(botKarts);
 
-  for (const b of G.bots.values()) b.input = b.driver.input(dt, remaining, active);
+  for (const b of G.bots.values()) b.input = b.driver.input(dt, remaining, active, wet);
 
   // ---- fixed-step physics
   race.acc += dt;
   let steps = 0;
-  const envMe = { others: othersForMe, spurtMul: mySpurt, active, raceTime: tRace };
+  const envMe = { others: othersForMe, spurtMul: mySpurt, active, raceTime: tRace, wet };
   while (race.acc >= PHYS_STEP && steps < 40) {
     me.step(PHYS_STEP, inp, envMe);
     for (const b of G.bots.values()) {
       const others = [me, ...remoteDisps, ...botKarts];
-      b.kart.step(PHYS_STEP, b.input, { others, spurtMul: spurtMulFor(b.kart.skill, remaining, active), active, raceTime: tRace });
+      b.kart.step(PHYS_STEP, b.input, { others, spurtMul: spurtMulFor(b.kart, remaining, active), active, raceTime: tRace, wet });
     }
     race.acc -= PHYS_STEP;
     steps++;
@@ -700,8 +802,17 @@ function updateRace(dt, time) {
   }
   G.smokeVision = Math.max(0, G.smokeVision - dt);
   const smokeAmt = Math.min(1, G.smokeVision / 1.2);
-  scene.fog.near = FOG_NEAR + (4 - FOG_NEAR) * smokeAmt;
-  scene.fog.far = FOG_FAR + (40 - FOG_FAR) * smokeAmt;
+  const wx = race.weather;
+  let fogNear = FOG_NEAR + (25 - FOG_NEAR) * 0.7 * wx.rain;
+  let fogFar = FOG_FAR + (210 - FOG_FAR) * 0.8 * wx.rain;
+  fogNear += (5 - fogNear) * wx.fog;
+  fogFar += (70 - fogFar) * wx.fog;
+  scene.fog.near = fogNear + (4 - fogNear) * smokeAmt;
+  scene.fog.far = fogFar + (40 - fogFar) * smokeAmt;
+
+  // ---- spray off the tyres on a wet track
+  const sprayAmt = v => wet * Math.min(1, Math.abs(v) / 18);
+  spray.emitFromKart(G.myId, me, dt, sprayAmt(me.vf));
 
   // ---- remote karts (interpolation) & bots
   updateRemotes(dt);
@@ -709,7 +820,9 @@ function updateRace(dt, time) {
     const k = b.kart;
     placeModel(b.model, k.x, k.y, k.z, k.heading, k.steer, k.vf, dt, k.boostT > 0, k.tyreType);
     if (k.smokeT > 0) smoke.emitFromKart(id, k, dt);
+    spray.emitFromKart(id, k, dt, sprayAmt(k.vf));
   }
+  for (const [id, r] of G.remotes) spray.emitFromKart(id, r.disp, dt, sprayAmt(r.target.v));
 
   // ---- network
   race.sendAcc += dt;
@@ -728,6 +841,8 @@ function updateRace(dt, time) {
     skid: me.airborne ? 0 : me.skid,
     dirt: onRough ? Math.min(1, me.speed / 10) : 0,
     wind: me.slip,
+    rain: wx.rain,
+    spray: me.airborne ? 0 : sprayAmt(me.vf),
   });
 
   updateCamera(dt);
@@ -767,7 +882,7 @@ function handleKartEvent(e, time) {
       break;
     case 'pitMenu':
       sound.sfx('pitEnter');
-      ui.showPitMenu({ box: e.box, err: e.err, time: me.pitTimeFor(e.err), quick: me.skill === 'quickpit', current: me.tyreType });
+      ui.showPitMenu({ box: e.box, err: e.err, time: me.pitTimeFor(e.err), quick: me.effSkill === 'quickpit', current: me.tyreType, wet: G.race.weather.wet });
       break;
     case 'pitMenuClose':
       ui.hidePitMenu();
@@ -788,6 +903,15 @@ function handleKartEvent(e, time) {
       break;
     case 'respawn':
       hud.message('RESPAWN', '#ffffff', 1, 4);
+      break;
+    case 'jammed':
+      sound.sfx('jammed');
+      hud.message(`SKILL JAMMED ${e.sec}S`, '#ff70ff', 2, 4);
+      if (G.race.jamBy) hud.message(`BY ${G.race.jamBy.toUpperCase()}`, '#ffb0ff', 2, 2);
+      break;
+    case 'unjammed':
+      sound.sfx('unjammed');
+      hud.message('SKILL BACK ONLINE', '#7cf0ff', 1.4, 3);
       break;
   }
 }
@@ -902,13 +1026,17 @@ function buildHudState(remaining, cd, time) {
   }
 
   const def = SKILL_BY_ID[me.skill];
+  const oc = G.race.ocOn && me.effSkill === 'overclock';
+  const wx = G.race.weather;
+  const next = wx.enabled ? wx.upcoming(Math.max(0, G.race.duration - remaining)) : null;
   return {
     phase: G.race.active ? 'race' : 'pre',
     time,
     remaining,
     countdown: cd,
-    spurt: G.race.spurtOn,
-    spurtLabel: G.race.spurtOn ? (me.skill === 'overclock' ? 'OVERCLOCK X1.2' : 'LAST SPURT X1.1') : null,
+    spurt: G.race.spurtOn || oc,
+    spurtLabel: oc ? 'OVERCLOCK X1.25' : G.race.spurtOn ? 'LAST SPURT X1.1' : null,
+    weather: wx.enabled ? { state: wx.state(), rain: wx.rain, fog: wx.fog, wet: wx.wet, next: next && next.in <= 30 ? next : null } : null,
     position,
     total: entries.length,
     lap: me.lap + 1,
@@ -923,7 +1051,7 @@ function buildHudState(remaining, cd, time) {
     limiter: me.limiter,
     tyreType: me.tyreType,
     tyre: me.tyre,
-    skill: { def, cd: me.skillCd, cdTotal: def.cd || 0 },
+    skill: { def, cd: me.skillCd, cdTotal: def.cd || 0, jam: me.jamT, target: G.race.jamTarget ? G.race.jamTarget.name : null },
     standings: entries,
     karts: entries,
     slip: me.slip,

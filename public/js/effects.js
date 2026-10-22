@@ -79,3 +79,67 @@ export class SmokeSystem {
     this.emitters.clear();
   }
 }
+
+// ============================================================
+//  Rooster-tail spray thrown up by the tyres on a wet track (visual only)
+// ============================================================
+const SPRAY_MAX = 160;
+
+export class SpraySystem {
+  constructor(scene) {
+    this.tex = smokeTex();
+    this.drops = [];
+    for (let i = 0; i < SPRAY_MAX; i++) {
+      const mat = new THREE.SpriteMaterial({ map: this.tex, color: 0xdde6f0, transparent: true, opacity: 0, depthWrite: false });
+      const s = new THREE.Sprite(mat);
+      s.visible = false;
+      scene.add(s);
+      this.drops.push({ s, life: 0, max: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, size: 1 });
+    }
+    this.cursor = 0;
+    this.emitters = new Map();
+  }
+
+  /** k: kart-like {x,y,z,heading,vx,vz}; amount = wetness x speed factor (0..1) */
+  emitFromKart(id, k, dt, amount) {
+    if (amount <= 0.02 || (k.y || 0) > 0.4) return;
+    let acc = (this.emitters.get(id) || 0) + dt * amount;
+    const fx = -Math.sin(k.heading), fz = -Math.cos(k.heading);
+    const rx = -fz, rz = fx;
+    while (acc > 0.035) {
+      acc -= 0.035;
+      const p = this.drops[this.cursor];
+      this.cursor = (this.cursor + 1) % SPRAY_MAX;
+      const side = Math.random() < 0.5 ? -0.8 : 0.8;   // one plume per rear wheel
+      p.life = p.max = 0.5 + Math.random() * 0.3;
+      p.x = k.x - fx * 1.6 + rx * side;
+      p.z = k.z - fz * 1.6 + rz * side;
+      p.y = 0.2;
+      p.vx = (k.vx || 0) * 0.55 - fx * 2 + (Math.random() - 0.5) * 2;
+      p.vz = (k.vz || 0) * 0.55 - fz * 2 + (Math.random() - 0.5) * 2;
+      p.vy = 1.5 + Math.random() * 1.5;
+      p.size = 0.7 + Math.random() * 0.5;
+      p.s.visible = true;
+    }
+    this.emitters.set(id, acc);
+  }
+
+  update(dt) {
+    for (const p of this.drops) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      if (p.life <= 0) { p.s.visible = false; continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+      p.vx *= 1 - 2.5 * dt; p.vz *= 1 - 2.5 * dt; p.vy -= 4 * dt;
+      p.size += dt * 2.2;
+      p.s.material.opacity = 0.55 * Math.min(1, p.life / p.max * 2);
+      p.s.position.set(p.x, Math.max(0.2, p.y), p.z);
+      p.s.scale.set(p.size * 1.6, p.size, 1);
+    }
+  }
+
+  clear() {
+    for (const p of this.drops) { p.life = 0; p.s.visible = false; }
+    this.emitters.clear();
+  }
+}

@@ -58,22 +58,35 @@ export const PHYS = {
     dirt: { speed: 0.45, wear: 3.0, grip: 0.7 },
   },
   DASH: { amt: 0.45, dur: 1.4, accel: 2.2, kick: 5 },
-  NITRO: { amt: 0.6, dur: 3.0, accel: 2.8, kick: 4, cost: 8 },
+  // Dash Junkie: dash panels give x1.8 boost, x2 duration, x1.5 kick
+  JUNKIE: { amt: 1.8, dur: 2.0, kick: 1.5 },
+  NITRO: { amt: 0.6, dur: 3.0, accel: 2.8, kick: 4, cost: 5 },
   // Quick Pit: change time x0.4, 85 km/h pit limiter, 4 s dash when rejoining
   QUICKPIT: { amt: 0.5, dur: 4.0, accel: 2.4, kick: 4 },
   QUICKPIT_TIME_MUL: 0.4,
   // Aero Jump: boosted flight + mini dash on landing
   AERO: { amt: 0.25, dur: 1.3, accel: 1.5, kick: 3 },
   AERO_LAND: { amt: 0.3, dur: 1.0, accel: 2.0, kick: 3 },
-  // Smoke Screen: longer/denser cloud, small boost for the user, victims lose speed while inside
-  SMOKE_EMIT: 2.5,
-  SMOKE_SELF: { amt: 0.2, dur: 1.5, accel: 1.6, kick: 2 },
-  SMOKE_SLOW: 0.85,
-  SLIP: { range: 16, lat: 2.4, bonus: 0.1, charge: 1.0, wear: 0.7 },
+  // Smoke Screen: long, dense cloud + a boost for the user; victims lose a lot of speed inside
+  SMOKE_EMIT: 3.5,
+  SMOKE_SELF: { amt: 0.3, dur: 2.0, accel: 1.8, kick: 3 },
+  SMOKE_SLOW: 0.75,
+  SLIP: { range: 16, lat: 2.4, bonus: 0.1, charge: 1.0, decay: 1.5, wear: 0.7 },
+  // Slip Hunter: longer & wider wake, x2.5 bonus, charges twice as fast, lingers after leaving it
+  SLIP_HUNTER: { range: 2.5, lat: 1.5, bonus: 2.5, charge: 0.5, decay: 0.4, wear: 0.5 },
   SPURT_TIME: 30, SPURT_MUL: 1.1,
-  // Overclock: x1.2 from the last 90 s, and no tyre wear while overclocked
-  OVERCLOCK_TIME: 90, OVERCLOCK_MUL: 1.2,
+  // Overclock: x1.25 for the last 25% of the race (at least 2 minutes), no tyre wear meanwhile
+  OVERCLOCK_FRACTION: 0.25, OVERCLOCK_MIN: 120, OVERCLOCK_MUL: 1.25,
   HIGHROLLER_MUL: 1.12, HIGHROLLER_WEAR: 1.25,
+  MEISTER_WEAR: 0.75,
+  // Skill Jammer: silences the nearest rival ahead
+  JAMMER: { range: 300, dur: 10 },
+
+  // ---- weather (wet = how wet the track is, 0..1)
+  WET_SLICK_GRIP: 0.42,   // slicks lose up to 42% grip on a soaked track
+  WET_SLICK_SPEED: 0.06,
+  WET_DRY_GRIP: 0.12,     // wet tyres on a dry track lose 12% grip...
+  WET_DRY_WEAR: 2.0,      // ...and wear up to 3x faster
 
   // ---- automatic transmission: 6 speeds. gear top speed = nominal top speed x ratio
   GEARS: [0.27, 0.43, 0.58, 0.72, 0.86, 1.0],
@@ -89,25 +102,29 @@ export const TYRES = {
   S: { id: 'S', name: 'ソフト', en: 'SOFT', color: '#ff3b3b', hex: 0xff3b3b, speed: 1.09, grip: 1.26, life: 200, lifeText: '約3〜4分' },
   M: { id: 'M', name: 'ミディアム', en: 'MEDIUM', color: '#ffd23b', hex: 0xffd23b, speed: 1.03, grip: 1.07, life: 400, lifeText: '約6〜8分' },
   H: { id: 'H', name: 'ハード', en: 'HARD', color: '#f4f4f4', hex: 0xf4f4f4, speed: 0.95, grip: 0.88, life: 700, lifeText: '10分以上' },
+  W: { id: 'W', name: 'ウェット', en: 'WET', color: '#3b9cff', hex: 0x3b9cff, speed: 0.95, grip: 1.08, life: 420, wet: true, lifeText: '雨用・晴れだと急速に摩耗' },
 };
-export const TYRE_ORDER = ['S', 'M', 'H'];
+export const TYRE_ORDER = ['S', 'M', 'H', 'W'];
 
 // ---------------- Skills ----------------
 export const SKILLS = [
-  { id: 'meister', name: 'タイヤマイスター', en: 'TYRE MEISTER', type: 'passive', desc: 'すべてのタイヤの摩耗速度が30%軽減される。' },
-  { id: 'junkie', name: 'ダッシュジャンキー', en: 'DASH JUNKIE', type: 'passive', desc: 'ダッシュ板を踏んだ際の加速倍率と持続時間が1.5倍になる。' },
+  { id: 'meister', name: 'タイヤマイスター', en: 'TYRE MEISTER', type: 'passive', desc: 'すべてのタイヤの摩耗速度が25%軽減される。' },
+  { id: 'junkie', name: 'ダッシュジャンキー', en: 'DASH JUNKIE', type: 'passive', desc: 'ダッシュ板の加速倍率が1.8倍・持続時間が2倍・踏んだ瞬間の加速も1.5倍になる。' },
   { id: 'offroader', name: 'オフローダー', en: 'OFF-ROADER', type: 'passive', desc: 'コース外の芝生やダートを走っても減速せず、タイヤの追加摩耗も発生しない。' },
-  { id: 'sliphunter', name: 'スリップハンター', en: 'SLIP HUNTER', type: 'passive', desc: 'スリップストリームの有効距離と加速効果が2倍になる。' },
+  { id: 'sliphunter', name: 'スリップハンター', en: 'SLIP HUNTER', type: 'passive', desc: 'スリップストリームの有効距離2.5倍・加速効果2.5倍。すぐ効き始め、抜けた後もしばらく続く。タイヤ消耗も半減。' },
   { id: 'quickpit', name: 'クイックピット', en: 'QUICK PIT', type: 'passive', desc: 'タイヤ交換時間が60%短縮、ピット制限速度が85km/hに。ピットアウト時に4秒間ダッシュ加速。' },
-  { id: 'nitro', name: 'ニトロブースト', en: 'NITRO BOOST', type: 'active', cd: 30, desc: 'タイヤ残量を8%消費する代わりに、3秒間爆発的に加速する。' },
-  { id: 'smoke', name: 'スモークスクリーン', en: 'SMOKE SCREEN', type: 'active', cd: 18, desc: '加速しながら後方に濃い煙幕を張る。煙に入ったライバルは視界が5秒間悪化し、煙の中では減速する。' },
+  { id: 'nitro', name: 'ニトロブースト', en: 'NITRO BOOST', type: 'active', cd: 30, desc: 'タイヤ残量を5%消費する代わりに、3秒間爆発的に加速する。' },
+  { id: 'smoke', name: 'スモークスクリーン', en: 'SMOKE SCREEN', type: 'active', cd: 12, desc: '大きく加速しながら後方に濃い煙幕を長く張る。煙に入ったライバルは視界が6秒間悪化し、煙の中では25%減速する。' },
   { id: 'aerojump', name: 'エアロジャンプ', en: 'AERO JUMP', type: 'active', cd: 10, desc: '加速しながら高くジャンプし、前方のカートやダートを飛び越える。着地時にミニダッシュ。' },
-  { id: 'overclock', name: 'オーバークロック', en: 'OVERCLOCK', type: 'passive', desc: 'ラスト30秒の1.1倍加速が、自分だけ「ラスト90秒から1.2倍」に強化。その間タイヤが減らない。' },
+  { id: 'overclock', name: 'オーバークロック', en: 'OVERCLOCK', type: 'passive', desc: 'レース終盤（残り25%・最低2分）から自分だけ1.25倍加速。その間タイヤが減らない。' },
   { id: 'highroller', name: 'ハイローラー', en: 'HIGH ROLLER', type: 'passive', desc: '常時、最高速度と加速が12%高い。ただしタイヤの摩耗速度が1.25倍になる。' },
+  { id: 'jammer', name: 'スキルジャマー', en: 'SKILL JAMMER', type: 'active', cd: 25, desc: '前方にいる一番近いライバル（300m以内）の個性を10秒間無効化する。パッシブもアクティブも止まる。' },
 ];
-export const SKILL_BY_ID = Object.fromEntries(SKILLS.map(s => [s.id, s]));
+// used for everyone in "no skills" mode, and while a skill is jammed (never shown in the lobby list)
+export const SKILL_NONE = { id: 'none', name: '個性なし', en: 'NO SKILL', type: 'none', desc: '' };
+export const SKILL_BY_ID = Object.fromEntries(SKILLS.concat([SKILL_NONE]).map(s => [s.id, s]));
 
 // ---------------- Players ----------------
 export const KART_COLORS = ['#e83b3b', '#3b6ee8', '#2fbf4f', '#e8c43b', '#a050e8', '#ef7f2a', '#30c8d8', '#e84aa8'];
 
-export const SMOKE_VISION_TIME = 5;
+export const SMOKE_VISION_TIME = 6;

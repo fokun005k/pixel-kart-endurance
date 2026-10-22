@@ -18,9 +18,10 @@ function esc(s) {
 }
 
 const TYRE_STATS = {
-  S: { speed: 5, grip: 5, life: 2 },
-  M: { speed: 4, grip: 4, life: 3 },
-  H: { speed: 3, grip: 3, life: 5 },
+  S: { speed: 5, grip: 5, life: 2, rain: 1 },
+  M: { speed: 4, grip: 4, life: 3, rain: 1 },
+  H: { speed: 3, grip: 3, life: 5, rain: 1 },
+  W: { speed: 3, grip: 2, life: 3, rain: 5 },
 };
 
 export class UI {
@@ -43,6 +44,7 @@ export class UI {
     $('btn-add-bot').onclick = () => { sound.sfx('click'); h.onAddBot(); };
     $('btn-remove-bot').onclick = () => { sound.sfx('click'); h.onRemoveBot(); };
     $('btn-start').onclick = () => { sound.sfx('click'); h.onStart(); };
+    $('btn-ready').onclick = () => { sound.sfx('click'); h.onReady(!this.myReady); };
 
     // results / pause
     $('btn-back-lobby').onclick = () => { sound.sfx('click'); h.onBackToLobby(); };
@@ -202,6 +204,7 @@ export class UI {
         <div class="stat"><span class="k">最高速</span>${pips(st.speed)}</div>
         <div class="stat"><span class="k">グリップ</span>${pips(st.grip)}</div>
         <div class="stat"><span class="k">耐久</span>${pips(st.life)}</div>
+        <div class="stat"><span class="k">雨</span>${pips(st.rain)}</div>
         <div class="life">寿命 ${T.lifeText}</div>`;
       card.onclick = () => { sound.sfx('click'); onPick(id); };
       container.appendChild(card);
@@ -261,11 +264,14 @@ export class UI {
       const li = el('li', p.id === myId ? 'me' : '');
       li.style.borderLeftColor = KART_COLORS[p.color % KART_COLORS.length];
       const T = TYRES[p.tyre] || TYRES.M;
-      const skill = SKILL_BY_ID[p.skill];
+      const skill = room.noSkills ? SKILL_BY_ID.none : SKILL_BY_ID[p.skill];
+      let tag = '';
+      if (p.id === room.hostId) tag = '<span class="tag host">HOST</span>';
+      else if (p.isBot) tag = '<span class="tag cpu">CPU</span>';
+      else tag = p.ready ? '<span class="tag ready">準備OK</span>' : '<span class="tag wait">選択中</span>';
       li.innerHTML = `
         <span class="pname">${esc(p.name)}</span>
-        ${p.id === room.hostId ? '<span class="tag host">HOST</span>' : ''}
-        ${p.isBot ? '<span class="tag cpu">CPU</span>' : ''}
+        ${tag}
         <span class="tyre-dot" style="background:${T.color}">${p.tyre}</span>
         <span class="pskill">${skill ? skill.name : ''}</span>`;
       list.appendChild(li);
@@ -301,8 +307,51 @@ export class UI {
       b.onclick = () => { sound.sfx('click'); this.h.onNight(night); };
       ts.appendChild(b);
     }
+    // race rules: weather changes, skills on/off (host only)
+    const seg = (id, value, opts, onPick) => {
+      const box = $(id);
+      box.innerHTML = '';
+      for (const [v, label] of opts) {
+        const b = el('button', 'btn small' + (value === v ? ' on' : ''), label);
+        b.type = 'button';
+        b.disabled = !isHost;
+        b.onclick = () => { sound.sfx('click'); onPick(v); };
+        box.appendChild(b);
+      }
+    };
+    seg('weather-select', room.weather !== false, [[true, '☂ 変化あり'], [false, '☀ 晴れのみ']], v => this.h.onWeather(v));
+    seg('skillrule-select', !!room.noSkills, [[false, '個性あり'], [true, '個性なし']], v => this.h.onNoSkills(v));
+    $('rule-note').textContent = (room.weather !== false
+      ? '天候：基本は晴れ。ときどき雨や霧が発生（雨の路面ではウェットタイヤが有利）。'
+      : '天候：レース中ずっと晴れ。') + (isHost ? '' : '（ルールはホストが設定）');
+    $('noskill-note').classList.toggle('hidden', !room.noSkills);
+    $('skill-select').classList.toggle('off', !!room.noSkills);
+
     $('btn-add-bot').disabled = room.players.length >= 8;
     $('btn-remove-bot').disabled = !room.players.some(p => p.isBot);
+
+    // ready check: guests press READY, then the host starts the race
+    const guests = room.players.filter(p => !p.isBot && p.id !== room.hostId);
+    const readyN = guests.filter(p => p.ready).length;
+    const allReady = readyN === guests.length;
+    const me = room.players.find(p => p.id === myId);
+    this.myReady = !isHost && !!(me && me.ready);
+    $('ready-status').innerHTML = guests.length ? `準備OK <b>${readyN}</b> / ${guests.length}人` : '';
+    const start = $('btn-start');
+    start.disabled = !allReady;
+    start.textContent = allReady
+      ? (guests.length ? '全員準備OK！ レース開始！' : 'レース開始！')
+      : `準備OK待ち… (${readyN}/${guests.length})`;
+    const rb = $('btn-ready');
+    rb.classList.toggle('on', this.myReady);
+    rb.textContent = this.myReady ? '✔ 準備OK（押すと取り消し）' : '準備OK！';
+    const wait = $('wait-msg');
+    wait.textContent = !this.myReady
+      ? 'タイヤと個性を選んだら「準備OK」を押してください'
+      : allReady ? 'ホストの開始を待っています…' : 'ほかのプレイヤーの準備を待っています…';
+    wait.classList.toggle('blink', this.myReady);
+    $('tyre-select').classList.toggle('locked', this.myReady);
+    $('skill-select').classList.toggle('locked', this.myReady);
     this.renderSelection(sel);
   }
 
@@ -317,7 +366,8 @@ export class UI {
     $('pit-choices').classList.remove('hidden');
     $('pit-progress').classList.add('hidden');
     const q = info.err <= PIT.PERFECT ? ['perfect', 'PERFECT STOP!'] : info.err <= 1.5 ? ['good', 'GOOD STOP'] : ['ok', 'ズレあり…'];
-    $('pit-quality').innerHTML = `<span class="${q[0]}">${q[1]}</span>　BOX ${info.box + 1} ・ ズレ ${info.err.toFixed(2)}m ・ 作業時間 約${info.time.toFixed(1)}秒${info.quick ? '（クイックピット）' : ''}`;
+    const wet = info.wet > 0.05 ? `<br><small>路面：ウェット ${Math.round(info.wet * 100)}%${info.wet > 0.4 ? '（ウェットタイヤ推奨）' : ''}</small>` : '';
+    $('pit-quality').innerHTML = `<span class="${q[0]}">${q[1]}</span>　BOX ${info.box + 1} ・ ズレ ${info.err.toFixed(2)}m ・ 作業時間 約${info.time.toFixed(1)}秒${info.quick ? '（クイックピット）' : ''}${wet}`;
     for (const [id, c] of Object.entries(this.pitCards)) c.classList.toggle('sel', id === info.current);
   }
 
@@ -337,8 +387,8 @@ export class UI {
   setSkillButton(visible) { $('skill-btn').classList.toggle('hidden', !visible); }
 
   /** label of the on-screen skill button: name + READY / cooldown seconds */
-  updateSkillButton(name, cd, keyText = '') {
-    const sub = cd > 0 ? `CT ${Math.ceil(cd)}` : 'READY';
+  updateSkillButton(name, cd, keyText = '', jammed = false) {
+    const sub = jammed ? `JAM ${Math.ceil(cd)}` : cd > 0 ? `CT ${Math.ceil(cd)}` : 'READY';
     const shown = document.body.classList.contains('touch') || !keyText ? sub : `${keyText} ${cd > 0 ? sub : ''}`;
     if (this._skillLabel === name + shown) return;
     this._skillLabel = name + shown;

@@ -55,10 +55,13 @@ export class Net {
   setDuration(sec) { this.socket.emit('setDuration', sec); }
   setCourse(id) { this.socket.emit('setCourse', id); }
   setNight(on) { this.socket.emit('setNight', !!on); }
+  setWeather(on) { this.socket.emit('setWeather', !!on); }
+  setNoSkills(on) { this.socket.emit('setNoSkills', !!on); }
+  setReady(on) { this.socket.emit('setReady', !!on); }
   addBot() { this.socket.emit('addBot'); }
   removeBot() { this.socket.emit('removeBot'); }
-  startRace() { this.socket.emit('startRace'); }
+  startRace() { return this._ask('startRace', {}); }
   sendState(s) { this.socket.volatile.emit('state', s); }
   sendBotStates(arr) { this.socket.volatile.emit('botStates', arr); }
-  sendSkill(type) { this.socket.emit('skill', { type }); }
+  sendSkill(type, target) { this.socket.emit('skill', target ? { type, target } : { type }); }
 }

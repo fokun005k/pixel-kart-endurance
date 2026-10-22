@@ -116,6 +116,8 @@ export const THEMES = {
     leaves: ['#8a9a50', '#6a7a3a', '#a8b060'], mtn: ['#d08a5a', '#b0603c'], snowCaps: false },
   forest: { ground: [56, 114, 52], tuft: '#2e5e2a', light: '#6aa25a', dots: ['#f4e45a'], pine: 0.85,
     leaves: ['#2e7a3a', '#245e2c', '#3e8a42'], mtn: ['#6a88a8', '#3a6448'], snowCaps: true },
+  flower: { ground: [90, 160, 70], tuft: '#4e8a3a', light: '#9ed47a', dots: ['#ff6ab0', '#ffe24a', '#ffffff', '#ff8a3a', '#b08aff'],
+    dotCount: 70, pine: 0.15, leaves: ['#5aa84e', '#3e8a3c', '#7cc860'], mtn: ['#9ab0d8', '#78a868'], snowCaps: true },
 };
 
 export function grassTex(theme = 'green') {
@@ -129,7 +131,7 @@ export function grassTex(theme = 'green') {
       dot(g, x, y, T.tuft, 1, 2);
     }
     for (let i = 0; i < 70; i++) dot(g, Math.floor(r() * 64), Math.floor(r() * 64), T.light);
-    for (let i = 0; i < 8; i++) dot(g, Math.floor(r() * 64), Math.floor(r() * 64), T.dots[Math.floor(r() * T.dots.length)]);
+    for (let i = 0; i < (T.dotCount || 8); i++) dot(g, Math.floor(r() * 64), Math.floor(r() * 64), T.dots[Math.floor(r() * T.dots.length)]);
     return pixelTexture(c);
   });
 }

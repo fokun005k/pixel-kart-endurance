@@ -31,6 +31,7 @@ export class Kart {
     this.boostT = 0; this.boostAmt = 0; this.boostAccel = 1;
     this.slip = 0; this.inSlip = false;
     this.skillCd = 0;
+    this.jamT = 0;         // skill disabled by a rival's Skill Jammer
     this.smokeT = 0;
     this.smokeSlowT = 0;   // inside someone else's smoke screen
     this.aeroLand = false; // pending Aero Jump landing dash
@@ -51,6 +52,16 @@ export class Kart {
 
   get def() { return SKILL_BY_ID[this.skill]; }
   get speed() { return Math.hypot(this.vx, this.vz); }
+  /** the skill that is actually working right now ('none' while jammed) */
+  get effSkill() { return this.jamT > 0 ? 'none' : this.skill; }
+
+  /** a rival's Skill Jammer hit this kart */
+  jam(sec) {
+    if (this.skill === 'none') return;
+    this.jamT = Math.max(this.jamT, sec);
+    this.smokeT = 0;   // cut an ongoing smoke screen
+    this.events.push({ type: 'jammed', sec });
+  }
 
   placeAt(dist, d) {
     const p = this.track.pointAt(dist, d);
@@ -95,22 +106,30 @@ export class Kart {
     this.events.push({ type: 'shift', gear: g, dir });
   }
 
-  applyBoost(cfg, mul = 1) {
-    const amt = cfg.amt * mul;
+  /** start a speed boost; m = optional multipliers {amt, dur, kick} */
+  applyBoost(cfg, m = {}) {
+    const amt = cfg.amt * (m.amt || 1);
     this.boostAmt = this.boostT > 0 ? Math.max(this.boostAmt, amt) : amt;
-    this.boostT = Math.max(this.boostT, cfg.dur * mul);
+    this.boostT = Math.max(this.boostT, cfg.dur * (m.dur || 1));
     this.boostAccel = cfg.accel;
+    const kick = cfg.kick * (m.kick || 1);
     const fx = -Math.sin(this.heading), fz = -Math.cos(this.heading);
-    this.vx += fx * cfg.kick;
-    this.vz += fz * cfg.kick;
+    this.vx += fx * kick;
+    this.vz += fz * kick;
   }
 
-  /** Try to use the active skill. Returns the skill id when it fired. */
-  activateSkill(raceActive) {
+  /**
+   * Try to use the active skill. Returns the skill id when it fired.
+   * `target` is needed for the Skill Jammer (the rival ahead, found by the caller).
+   */
+  activateSkill(raceActive, target = null) {
     const def = this.def;
     if (!def || def.type !== 'active' || this.skillCd > 0 || !raceActive) return null;
-    if (this.pit.state === 'work' || this.freezeT > 0) return null;
+    if (this.pit.state === 'work' || this.freezeT > 0 || this.jamT > 0) return null;
     switch (this.skill) {
+      case 'jammer':
+        if (!target) return null;   // nobody ahead in range: keep the charge
+        break;
       case 'nitro':
         this.tyre = Math.max(0, this.tyre - PHYS.NITRO.cost);
         this.applyBoost(PHYS.NITRO);
@@ -139,7 +158,7 @@ export class Kart {
     let t = err <= PIT.PERFECT
       ? PIT.TIME_MIN
       : PIT.TIME_MIN + Math.min(1, (err - PIT.PERFECT) / (PIT.BOX_LEN / 2 - PIT.PERFECT)) * (PIT.TIME_MAX - PIT.TIME_MIN);
-    if (this.skill === 'quickpit') t *= PHYS.QUICKPIT_TIME_MUL;
+    if (this.effSkill === 'quickpit') t *= PHYS.QUICKPIT_TIME_MUL;
     return t;
   }
 
@@ -169,12 +188,17 @@ export class Kart {
   /**
    * @param {number} dt
    * @param {{throttle:number, brake:number, steer:number}} inp
-   * @param {{others:Array, spurtMul:number, active:boolean, raceTime:number, noWear?:boolean}} env
+   * @param {{others:Array, spurtMul:number, active:boolean, raceTime:number, noWear?:boolean, wet?:number}} env
    */
   step(dt, inp, env) {
     const T = TYRES[this.tyreType];
-    const sk = this.skill;
+    if (this.jamT > 0) {
+      this.jamT -= dt;
+      if (this.jamT <= 0) this.events.push({ type: 'unjammed' });
+    }
+    const sk = this.effSkill;
     const track = this.track;
+    const wet = env.wet || 0;
 
     if (this.skillCd > 0) this.skillCd = Math.max(0, this.skillCd - dt);
     if (this.freezeT > 0) this.freezeT -= dt;
@@ -192,8 +216,11 @@ export class Kart {
     // ---- tyre condition -> performance
     const cond = Math.max(0, this.tyre) / 100;
     const burst = this.tyre <= 0;
-    const grip = T.grip * (burst ? 0.42 : 0.62 + 0.38 * cond);
+    let grip = T.grip * (burst ? 0.42 : 0.62 + 0.38 * cond);
     let topF = T.speed * (burst ? 0.45 : 0.9 + 0.1 * cond);
+    // wet track: slicks lose grip; wet tyres are the right choice (but overheat when it's dry)
+    if (T.wet) grip *= 1 - PHYS.WET_DRY_GRIP * (1 - wet);
+    else { grip *= 1 - PHYS.WET_SLICK_GRIP * wet; topF *= 1 - PHYS.WET_SLICK_SPEED * wet; }
     let accF = burst ? 0.55 : 1;
     if (sk === 'highroller') { topF *= PHYS.HIGHROLLER_MUL; accF *= PHYS.HIGHROLLER_MUL; }
     topF *= env.spurtMul;
@@ -207,7 +234,7 @@ export class Kart {
 
     // ---- slipstream
     this._updateSlip(dt, env.others);
-    const slipBonus = this.slip * PHYS.SLIP.bonus * (sk === 'sliphunter' ? 2 : 1);
+    const slipBonus = this.slip * PHYS.SLIP.bonus * (sk === 'sliphunter' ? PHYS.SLIP_HUNTER.bonus : 1);
 
     // ---- boost
     if (this.boostT > 0) this.boostT -= dt;
@@ -381,7 +408,7 @@ export class Kart {
     if (!this.airborne && q) {
       const di = track.dashAt(q);
       if (di >= 0 && di !== this.onDash && env.active) {
-        this.applyBoost(PHYS.DASH, sk === 'junkie' ? 1.5 : 1);
+        this.applyBoost(PHYS.DASH, sk === 'junkie' ? PHYS.JUNKIE : {});
         this.events.push({ type: 'dash' });
       }
       this.onDash = di;
@@ -398,9 +425,10 @@ export class Kart {
         const lat = Math.abs(this.yawRate) * sp / PHYS.LAT_ACC;
         const corner = 1 + 0.7 * Math.min(1.5, lat) + this.skid * 0.8;
         let mul = surfWear;
-        if (sk === 'meister') mul *= 0.7;
+        if (sk === 'meister') mul *= PHYS.MEISTER_WEAR;
         if (sk === 'highroller') mul *= PHYS.HIGHROLLER_WEAR;
-        if (this.slip > 0.3) mul *= PHYS.SLIP.wear;
+        if (this.slip > 0.3) mul *= sk === 'sliphunter' ? PHYS.SLIP_HUNTER.wear : PHYS.SLIP.wear;
+        if (T.wet) mul *= 1 + PHYS.WET_DRY_WEAR * (1 - wet);   // wets overheat on a dry track
         this.tyre = Math.max(0, this.tyre - (100 / T.life) * load * corner * mul * dt);
       }
     }
@@ -427,8 +455,10 @@ export class Kart {
   }
 
   _updateSlip(dt, others) {
-    const hunter = this.skill === 'sliphunter';
-    const range = PHYS.SLIP.range * (hunter ? 2 : 1);
+    const S = PHYS.SLIP, H = PHYS.SLIP_HUNTER;
+    const hunter = this.effSkill === 'sliphunter';
+    const range = S.range * (hunter ? H.range : 1);
+    const lat = S.lat * (hunter ? H.lat : 1);
     const sh = Math.sin(this.heading), ch = Math.cos(this.heading);
     const fx = -sh, fz = -ch, rx = ch, rz = -sh;
     let found = false;
@@ -438,13 +468,15 @@ export class Kart {
         const dx = o.x - this.x, dz = o.z - this.z;
         const along = dx * fx + dz * fz;
         if (along < 2.5 || along > range) continue;
-        if (Math.abs(dx * rx + dz * rz) > PHYS.SLIP.lat * (hunter ? 1.3 : 1)) continue;
+        if (Math.abs(dx * rx + dz * rz) > lat) continue;
         found = true;
         break;
       }
     }
     this.inSlip = found;
-    this.slip = found ? Math.min(1, this.slip + dt / PHYS.SLIP.charge) : Math.max(0, this.slip - dt * 1.5);
+    const charge = S.charge * (hunter ? H.charge : 1);
+    const decay = hunter ? H.decay : S.decay;
+    this.slip = found ? Math.min(1, this.slip + dt / charge) : Math.max(0, this.slip - dt * decay);
   }
 
   _updatePit(dt, inp, env, q) {
@@ -457,7 +489,7 @@ export class Kart {
         this.tyre = 100;
         this.wasBurst = false;
         p.state = 'done';
-        if (this.skill === 'quickpit') this.quickPitPending = true;
+        if (this.effSkill === 'quickpit') this.quickPitPending = true;
         this.events.push({ type: 'pitDone', tyre: p.choice });
       }
       return;

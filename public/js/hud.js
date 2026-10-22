@@ -81,8 +81,8 @@ export function renderTrackMap(tr, W, H, { background = null, pad = 8, dot = 2, 
 // Panel positions. On touch devices the bottom corners belong to the thumbs,
 // so speed moves to the bottom centre and tyre/minimap stack on the left.
 const LAYOUTS = {
-  desktop: { tyre: [10, 420], skill: [10, 350], minimap: [800, 250], speed: [710, 404, 240, 124] },
-  touch: { tyre: [10, 154], skill: null, minimap: [10, 270], speed: [350, 448, 260, 84] },
+  desktop: { tyre: [10, 420], skill: [10, 350], minimap: [800, 250], speed: [710, 404, 240, 124], weather: [248, 10] },
+  touch: { tyre: [10, 154], skill: null, minimap: [10, 270], speed: [350, 448, 260, 84], weather: [252, 470] },
 };
 
 export class Hud {
@@ -147,6 +147,7 @@ export class Hud {
     const time = st.time;
 
     // full-screen effects first (under the panels)
+    if (st.weather && st.weather.rain > 0.02) this._drawRain(st.weather.rain, dt);
     if (st.smoke > 0) this._drawSmoke(st.smoke, time);
     if (st.boost) this._drawSpeedLines(time);
     if (st.slip > 0.05) this._drawWind(st.slip, time);
@@ -160,6 +161,7 @@ export class Hud {
     this._drawSpeed(st, time);
     this._drawTyre(st, time);
     this._drawSkill(st, time);
+    if (st.weather) this._drawWeather(st.weather, time);
     if (st.pitInfo) this._drawPit(st.pitInfo, time);
     if (st.countdown !== null) this._drawCountdown(st.countdown);
     this._drawMessages(dt);
@@ -355,7 +357,7 @@ export class Hud {
   _drawSkill(st, time) {
     const g = this.g;
     const sk = st.skill;
-    if (!sk || !this.L.skill) return;
+    if (!sk || !this.L.skill || sk.def.type === 'none') return;
     const [x, y] = this.L.skill;
     const w = 250, h = 62;
     this._panel(x, y, w, h);
@@ -363,6 +365,24 @@ export class Hud {
     g.textBaseline = 'top';
     g.fillStyle = '#ffffff';
     g.fillText(sk.def.name, x + 12, y + 9);
+    if (sk.jam > 0) {
+      // silenced by a rival's Skill Jammer
+      const bx = x + 12, by = y + 36, bw = w - 24;
+      const on = Math.floor(time * 4) % 2 === 0;
+      g.fillStyle = on ? '#a020a0' : '#601060';
+      g.fillRect(bx, by, bw, 16);
+      drawText(g, `JAMMED ${Math.ceil(sk.jam)}S`, bx + bw / 2, by + 4, 1, '#ffffff', 'center');
+      drawText(g, 'OFFLINE', x + w - 12, y + 12, 1, '#ff70ff', 'right');
+      return;
+    }
+    if (sk.def.id === 'jammer') {
+      // who would be hit right now
+      g.font = `bold 12px ${JP_FONT}`;
+      g.textAlign = 'right';
+      g.fillStyle = sk.target ? '#ff90ff' : '#8088a0';
+      g.fillText(sk.target ? `→ ${sk.target}` : '前方300m以内に相手なし', x + w - 12, y + 24);
+      g.textAlign = 'left';
+    }
     if (sk.def.type === 'passive') {
       drawText(g, 'PASSIVE', x + w - 12, y + 12, 1, '#80c0ff', 'right');
       drawText(g, sk.def.en, x + 12, y + 38, 2, '#a8c8ff');
@@ -441,7 +461,60 @@ export class Hud {
     this.messages = this.messages.filter(m => m.t < m.dur);
   }
 
+  /** small weather panel: icon, state, track wetness or a forecast */
+  _drawWeather(w, time) {
+    const g = this.g;
+    const [x, y] = this.L.weather;
+    const bw = 96, bh = 58;
+    this._panel(x, y, bw, bh);
+    const ix = x + 8, iy = y + 8;   // 24x24 icon
+    const px = (c, xx, yy, ww = 2, hh = 2) => { g.fillStyle = c; g.fillRect(ix + xx, iy + yy, ww, hh); };
+    const cloud = (c) => {
+      px(c, 4, 8, 16, 8); px(c, 2, 12, 20, 6); px(c, 8, 4, 8, 4); px(c, 14, 6, 6, 4);
+    };
+    if (w.state === 'sun') {
+      px('#ffd23b', 7, 7, 10, 10); px('#ffd23b', 5, 9, 14, 6); px('#ffd23b', 9, 5, 6, 14);
+      const ray = Math.floor(time * 2) % 2 === 0;
+      for (const [a, b] of ray ? [[11, 0], [11, 22], [0, 11], [22, 11]] : [[3, 3], [19, 3], [3, 19], [19, 19]]) px('#ffe890', a, b);
+    } else if (w.state === 'fog') {
+      for (let k = 0; k < 4; k++) px('#d0d4dc', (k % 2) * 4, 3 + k * 6, 20, 2);
+    } else {
+      cloud(w.state === 'rain' ? '#9aa4b4' : '#c8ccd4');
+      if (w.state === 'rain') {
+        const ph = Math.floor(time * 8) % 3;
+        for (let k = 0; k < 4; k++) px('#5ab0ff', 3 + k * 5, 18 + ((k + ph) % 3) * 2, 2, 3);
+      }
+    }
+    const label = { sun: 'SUNNY', rain: 'RAIN', fog: 'FOG', wet: 'DRYING' }[w.state];
+    drawText(g, label, x + 38, y + 14, 1, w.state === 'sun' ? '#ffe060' : w.state === 'fog' ? '#d0d4dc' : '#9cd0ff');
+    if (w.next && Math.floor(time * 3) % 2 === 0) {
+      drawText(g, `${w.next.type === 'rain' ? 'RAIN' : 'FOG'} IN ${Math.ceil(w.next.in)}S`, x + 8, y + 40, 1, '#ffb040');
+    } else if (!w.next) {
+      const pct = Math.round(w.wet * 100);
+      drawText(g, `WET ${pct}%`, x + 8, y + 40, 1, pct > 40 ? '#5ab0ff' : pct > 0 ? '#9cd0ff' : '#808898');
+    }
+  }
+
   // ---------------- screen effects ----------------
+  /** slanted rain streaks over the whole screen */
+  _drawRain(amount, dt) {
+    const g = this.g;
+    if (!this.drops) {
+      this.drops = Array.from({ length: 150 }, () => ({
+        x: Math.random() * (HUD_W + 120), y: Math.random() * HUD_H, v: 650 + Math.random() * 500, len: 12 + Math.random() * 20,
+      }));
+    }
+    const n = Math.round(this.drops.length * Math.min(1, amount));
+    g.fillStyle = 'rgba(205,225,255,0.42)';
+    for (let i = 0; i < n; i++) {
+      const d = this.drops[i];
+      d.y += d.v * dt;
+      d.x -= d.v * 0.18 * dt;
+      if (d.y > HUD_H) { d.y = -d.len; d.x = Math.random() * (HUD_W + 120); }
+      for (let k = 0; k < d.len; k += 4) g.fillRect(Math.round(d.x - k * 0.18), Math.round(d.y + k), 2, 4);
+    }
+  }
+
   _drawSmoke(amount, time) {
     const g = this.g;
     g.globalAlpha = Math.min(0.92, amount);
