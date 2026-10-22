@@ -14,11 +14,12 @@ export function isTouchDevice() {
 }
 
 export class TouchControls {
-  constructor({ onSkill, onMenu, onRespawn }) {
+  constructor({ onSkill, onMenu, onRespawn, onShift }) {
     this.enabled = isTouchDevice();
     this.steer = 0;
     this.accel = false;
     this.brake = false;
+    this.hbrake = false;
     this.autoAccel = true;
     try {
       const v = localStorage.getItem('pke.autoAccel');
@@ -100,6 +101,7 @@ export class TouchControls {
     };
     hold($('tc-accel'), 'accel');
     hold($('tc-brake'), 'brake');
+    hold($('tc-hbrake'), 'hbrake');
 
     // ---- failsafe: release anything whose finger is no longer on the screen
     const sweep = (e) => {
@@ -114,6 +116,8 @@ export class TouchControls {
 
     const tap = (el, fn) => el.addEventListener('pointerdown', (e) => { e.preventDefault(); fn(); });
     tap($('skill-btn'), onSkill);
+    tap($('tc-gearup'), () => onShift && onShift(1));
+    tap($('tc-geardown'), () => onShift && onShift(-1));
     tap($('tc-menu'), onMenu);
     tap($('tc-respawn'), onRespawn);
     tap($('tc-fullscreen'), () => this.fullscreen());
@@ -152,5 +156,6 @@ export class TouchControls {
     this.steer = 0;
     this.accel = false;
     this.brake = false;
+    this.hbrake = false;
   }
 }

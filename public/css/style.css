@@ -151,6 +151,24 @@ body.touch.racing #touch-ui { display: block; }
   right: calc(var(--tc-edge) + var(--tc-accel) + var(--tc-gap));
   background: rgba(170, 40, 30, 0.75);
 }
+#tc-hbrake {
+  right: calc(var(--tc-edge) + var(--tc-accel) + var(--tc-gap));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--tc-btn) + var(--tc-gap));
+  background: rgba(150, 70, 180, 0.75);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.tc-btn small { font-size: 9px; opacity: 0.85; }
+.tc-btn.gear {
+  --tc-gear: clamp(44px, 16vh, 70px);
+  width: var(--tc-gear);
+  height: var(--tc-gear);
+  right: calc(var(--tc-edge) + var(--tc-accel) + var(--tc-btn) + var(--tc-gap) * 2);
+  background: rgba(60, 60, 80, 0.8);
+  font-size: 18px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+#tc-gearup { bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--tc-btn) + var(--tc-gap)); }
+body:not(.mt) .mt-only { display: none !important; }
 .tc-btn.down { transform: translate(3px, 3px); box-shadow: 1px 1px 0 #000; filter: brightness(1.4); }
 
 .tc-top {
@@ -381,6 +399,15 @@ input:focus { border-color: var(--accent); }
 .tyre-card .life { font-size: 11px; margin-top: 6px; color: #fff; }
 .tyre-card .key { position: absolute; top: 4px; right: 6px; font-size: 11px; color: var(--dim); }
 .tyre-cards.compact .tyre-card { padding: 12px; }
+
+.trans-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.trans-card { border: 3px solid #555; background: rgba(255,255,255,0.04); padding: 10px; cursor: pointer; }
+.trans-card:hover { border-color: #aaa; }
+.trans-card.sel { border-color: var(--accent); background: rgba(255, 210, 59, 0.12); }
+.trans-card .tr-head { display: flex; align-items: center; gap: 8px; font-weight: bold; font-size: 15px; }
+.trans-card .tr-badge { font-size: 13px; padding: 2px 6px; border: 2px solid currentColor; color: var(--accent); }
+.trans-card .tr-desc { font-size: 12px; color: var(--dim); margin-top: 6px; line-height: 1.45; }
+@media (max-width: 560px) { .trans-cards { grid-template-columns: 1fr; } }
 
 .course-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
 .course-card {

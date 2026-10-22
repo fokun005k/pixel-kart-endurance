@@ -81,8 +81,8 @@ export function renderTrackMap(tr, W, H, { background = null, pad = 8, dot = 2, 
 // Panel positions. On touch devices the bottom corners belong to the thumbs,
 // so speed moves to the bottom centre and tyre/minimap stack on the left.
 const LAYOUTS = {
-  desktop: { tyre: [10, 420], skill: [10, 350], minimap: [800, 250], speed: [760, 410, 190, 118] },
-  touch: { tyre: [10, 154], skill: null, minimap: [10, 270], speed: [390, 462, 180, 70] },
+  desktop: { tyre: [10, 420], skill: [10, 350], minimap: [800, 250], speed: [710, 404, 240, 124] },
+  touch: { tyre: [10, 154], skill: null, minimap: [10, 270], speed: [350, 448, 260, 84] },
 };
 
 export class Hud {
@@ -157,9 +157,10 @@ export class Hud {
     this._drawTimer(st, time);
     this._drawStandings(st);
     this._drawMinimap(st);
-    this._drawSpeed(st);
+    this._drawSpeed(st, time);
     this._drawTyre(st, time);
     this._drawSkill(st, time);
+    if (st.drift) this._drawDrift(st.drift, time);
     if (st.pitInfo) this._drawPit(st.pitInfo, time);
     if (st.countdown !== null) this._drawCountdown(st.countdown);
     this._drawMessages(dt);
@@ -257,29 +258,73 @@ export class Hud {
     }
   }
 
-  _drawSpeed(st) {
+  /** rev-counter LEDs: green -> yellow -> red; flashes cyan as a shift light */
+  _drawRevBar(x, y, w, h, rpm, shiftLight, time) {
+    const g = this.g;
+    const segs = 24;
+    const step = w / segs;
+    const flash = shiftLight && Math.floor(time * 12) % 2 === 0;
+    for (let i = 0; i < segs; i++) {
+      const f = (i + 1) / segs;
+      const on = rpm >= f - 0.5 / segs;
+      let col = f <= 0.6 ? '#30e070' : f <= 0.85 ? '#f0d030' : '#ff4040';
+      if (flash && on) col = '#7cf0ff';
+      g.fillStyle = on ? col : (f > 0.85 ? 'rgba(255,64,64,0.18)' : 'rgba(255,255,255,0.08)');
+      g.fillRect(Math.round(x + i * step), y, Math.max(2, Math.round(step) - 2), h);
+    }
+  }
+
+  _drawGearBox(x, y, w, h, gear, scale) {
+    const g = this.g;
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect(x, y, w, h);
+    g.fillStyle = '#ffd23b';
+    g.fillRect(x, y, w, 2); g.fillRect(x, y + h - 2, w, 2); g.fillRect(x, y, 2, h); g.fillRect(x + w - 2, y, 2, h);
+    drawText(g, String(gear), x + w / 2, y + Math.round((h - 7 * scale) / 2), scale, gear === 'R' ? '#ff6060' : '#ffffff', 'center');
+  }
+
+  _drawSpeed(st, time) {
     const g = this.g;
     const [x, y, w, h] = this.L.speed;
+    const spd = String(Math.round(st.speedKmh)).padStart(3, ' ');
+    const rpmText = String(Math.round(st.rpmValue / 100) * 100);
     this._panel(x, y, w, h);
     if (h < 100) {
-      // compact (touch layout)
-      drawText(g, String(Math.round(st.speedKmh)).padStart(3, ' '), x + w - 70, y + 12, 6, st.boost ? '#7cf0ff' : '#ffffff', 'right');
-      drawText(g, 'KM/H', x + w - 10, y + 40, 2, '#a8c8ff', 'right');
-      if (st.limiter) drawText(g, 'PIT', x + w - 10, y + 14, 2, '#f0c020', 'right');
+      // compact (touch layout): rev bar on top, gear left, speed right
+      this._drawRevBar(x + 8, y + 8, w - 16, 8, st.rpm, st.shiftLight, time);
+      this._drawGearBox(x + 8, y + 22, 46, 54, st.gear, 6);
+      drawText(g, `${rpmText} RPM`, x + 62, y + 24, 1, '#a8c8ff');
+      drawText(g, st.trans, x + 62, y + 66, 1, '#ffd23b');
+      drawText(g, spd, x + w - 64, y + 30, 6, st.boost ? '#7cf0ff' : '#ffffff', 'right');
+      drawText(g, 'KM/H', x + w - 10, y + 58, 2, '#a8c8ff', 'right');
+      if (st.limiter) drawText(g, 'PIT', x + w - 10, y + 26, 2, '#f0c020', 'right');
       return;
     }
-    // LED bar
-    const segs = 18;
-    const frac = Math.min(1, st.speedKmh / 140);
-    for (let i = 0; i < segs; i++) {
-      const on = i / segs < frac;
-      const col = i < 10 ? '#30e070' : i < 15 ? '#f0d030' : '#ff4040';
-      g.fillStyle = on ? col : 'rgba(255,255,255,0.08)';
-      g.fillRect(x + 12 + i * 9, y + 12, 7, 10);
-    }
-    drawText(g, String(Math.round(st.speedKmh)).padStart(3, ' '), x + w - 12, y + 34, 7, st.boost ? '#7cf0ff' : '#ffffff', 'right');
-    drawText(g, 'KM/H', x + w - 12, y + 92, 2, '#a8c8ff', 'right');
-    if (st.limiter) drawText(g, 'PIT LIMIT', x + 12, y + 96, 1, '#f0c020');
+    this._drawRevBar(x + 10, y + 10, w - 20, 12, st.rpm, st.shiftLight, time);
+    drawText(g, 'RPM', x + 10, y + 28, 1, '#a8c8ff');
+    drawText(g, rpmText, x + 32, y + 27, 2, st.rpm >= 0.86 ? '#ff6060' : '#ffffff');
+    if (st.limiter) drawText(g, 'PIT LIMIT', x + w - 10, y + 28, 1, '#f0c020', 'right');
+    this._drawGearBox(x + 10, y + 44, 58, 66, st.gear, 7);
+    drawText(g, st.trans, x + 39, y + 114, 1, '#ffd23b', 'center');
+    drawText(g, spd, x + w - 12, y + 46, 7, st.boost ? '#7cf0ff' : '#ffffff', 'right');
+    drawText(g, 'KM/H', x + w - 12, y + 102, 2, '#a8c8ff', 'right');
+  }
+
+  _drawDrift(d, time) {
+    const g = this.g;
+    const cx = HUD_W / 2, y = 318;
+    const col = d.level >= 2 ? '#ff9a2a' : d.level >= 1 ? '#5ab4ff' : '#ffffff';
+    const pulse = d.level > 0 && Math.floor(time * 10) % 2 === 0;
+    drawText(g, 'DRIFT', cx, y, 3, pulse ? '#ffffff' : col, 'center');
+    const bw = 170, by = y + 26;
+    g.fillStyle = 'rgba(0,0,0,0.6)';
+    g.fillRect(cx - bw / 2, by, bw, 10);
+    g.fillStyle = col;
+    g.fillRect(cx - bw / 2 + 2, by + 2, Math.round((bw - 4) * Math.min(1, d.charge)), 6);
+    // level marks
+    g.fillStyle = '#ffffff';
+    g.fillRect(Math.round(cx - bw / 2 + (bw - 4) * d.mark1), by - 2, 2, 14);
+    g.fillRect(Math.round(cx + bw / 2 - 4), by - 2, 2, 14);
   }
 
   _drawTyre(st, time) {

@@ -27,6 +27,9 @@
       </div>
       <button id="tc-brake" class="tc-btn" type="button">BRAKE</button>
       <button id="tc-accel" class="tc-btn accel" type="button">ACCEL</button>
+      <button id="tc-hbrake" class="tc-btn" type="button">DRIFT<small>サイド</small></button>
+      <button id="tc-gearup" class="tc-btn gear mt-only" type="button">▲<small>SHIFT</small></button>
+      <button id="tc-geardown" class="tc-btn gear mt-only" type="button">▼<small>SHIFT</small></button>
       <div class="tc-top">
         <button id="tc-menu" class="tc-small" type="button" aria-label="メニュー">II</button>
         <button id="tc-respawn" class="tc-small" type="button" aria-label="コースに復帰">R</button>
@@ -74,6 +77,8 @@
         <ul class="desktop-help">
           <li><b>W / ↑</b> アクセル　<b>S / ↓</b> ブレーキ・バック</li>
           <li><b>A D / ← →</b> ハンドル</li>
+          <li><b>SHIFT</b> サイドブレーキ（曲がりながら押すとドリフト、離すとミニターボ）</li>
+          <li><b>右クリック / E</b> シフトアップ　<b>左クリック / Q</b> シフトダウン（MTのみ）</li>
           <li><b>SPACE</b> アクティブスキル発動</li>
           <li><b>1 / 2 / 3</b> ピットでタイヤ選択（ソフト/ミディアム/ハード）</li>
           <li><b>R</b> コースに復帰　<b>M</b> ミュート　<b>ESC</b> メニュー</li>
@@ -81,6 +86,8 @@
         <ul class="touch-help">
           <li><b>画面左側</b>を左右にスライドしてハンドル</li>
           <li><b>ACCEL / BRAKE</b> ボタン（自動アクセルON時はブレーキだけでOK）</li>
+          <li><b>DRIFT</b> サイドブレーキ（曲がりながら押すとドリフト）</li>
+          <li><b>▲ / ▼</b> シフトアップ / ダウン（MTのみ）</li>
           <li><b>SKILL</b> ボタンでアクティブスキル発動</li>
           <li><b>II</b> メニュー　<b>R</b> コースに復帰</li>
           <li>横向き・全画面がおすすめです</li>
@@ -135,6 +142,8 @@
           <div id="course-select" class="course-grid"></div>
           <h2>時間帯</h2>
           <div id="time-select" class="seg"></div>
+          <h2>ミッション</h2>
+          <div id="trans-select" class="trans-cards"></div>
           <h2>初期タイヤ</h2>
           <div id="tyre-select" class="tyre-cards"></div>
           <h2>個性（スキル）</h2>

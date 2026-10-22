@@ -133,9 +133,9 @@ function loadEnvironment(courseId, night) {
 function loadSel() {
   try {
     const s = JSON.parse(localStorage.getItem('pke.sel') || 'null');
-    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return s;
+    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return { ...s, trans: s.trans === 'MT' ? 'MT' : 'AT' };
   } catch { /* ignore */ }
-  return { tyre: 'M', skill: 'meister' };
+  return { tyre: 'M', skill: 'meister', trans: 'AT' };
 }
 function saveSel() {
   try { localStorage.setItem('pke.sel', JSON.stringify(G.sel)); } catch { /* ignore */ }
@@ -197,6 +197,12 @@ const ui = new UI({
     ui.renderSelection(G.sel);
     net.updatePlayer(G.sel);
   },
+  onSelectTrans(t) {
+    G.sel.trans = t === 'MT' ? 'MT' : 'AT';
+    saveSel();
+    ui.renderSelection(G.sel);
+    net.updatePlayer(G.sel);
+  },
   onSelectSkill(s) {
     G.sel.skill = s;
     saveSel();
@@ -232,9 +238,18 @@ const touch = new TouchControls({
   onSkill: () => { sound.ensure(); skillQueued = true; },
   onMenu: () => ui.setPause(!ui.paused),
   onRespawn: () => respawn(),
+  onShift: dir => shiftGear(dir),
 });
 hud.setTouch(touch.enabled);
 ui.syncAutoAccel(touch.autoAccel);
+ui._buildTransCards();          // rebuild with smartphone wording now that touch mode is known
+ui.renderSelection(G.sel);
+
+/** MT gear change from mouse / keys / touch buttons */
+function shiftGear(dir) {
+  if (G.phase !== 'race' || !G.me || G.me.trans !== 'MT' || ui.paused) return;
+  G.me.shift(dir);
+}
 
 function respawn() {
   if (G.phase === 'race' && G.me && G.race && G.race.active && G.me.pit.state !== 'work') G.me.respawn();
@@ -334,7 +349,17 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyR') respawn();
   if (PIT_KEYS[e.code]) pitChoose(PIT_KEYS[e.code]);
+  if (e.code === 'KeyE') shiftGear(1);
+  if (e.code === 'KeyQ') shiftGear(-1);
 });
+// PC: right click = shift up, left click = shift down (MT). Mouse only, not taps / UI buttons.
+document.getElementById('stage').addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse' || G.phase !== 'race') return;
+  if (e.target.closest('button')) return;
+  if (e.button === 2) shiftGear(1);
+  else if (e.button === 0) shiftGear(-1);
+});
+document.getElementById('stage').addEventListener('contextmenu', (e) => { if (G.phase === 'race') e.preventDefault(); });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => { keys.clear(); touch.reset(); });
 
@@ -346,7 +371,8 @@ function readInput() {
   // smartphone auto-accelerate (paused while the pit menu is open so the kart can stay in the box)
   if (touch.enabled && touch.autoAccel && !brake && G.me && G.me.pit.state !== 'menu' && G.me.pit.state !== 'work') throttle = 1;
   const keySteer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
-  return { throttle, brake, steer: keySteer || touch.steer };
+  const handbrake = k('ShiftLeft') || k('ShiftRight') || touch.hbrake;
+  return { throttle, brake, steer: keySteer || touch.steer, handbrake };
 }
 
 function pitChoose(t) {
@@ -448,6 +474,7 @@ function clearRace() {
   ui.setRotateHint(false);
   touch.reset();
   document.body.classList.remove('racing');
+  document.body.classList.remove('mt');
   for (const l of world.gantryLights) l.material.color.setHex(0x3a0808);
 }
 
@@ -470,7 +497,7 @@ function startRace(data) {
     lastBump: 0, wrenchT: 0, wrongWayT: 0, skillWasReady: true,
   };
 
-  const me = new Kart(track, { id: G.myId, skill: G.sel.skill, tyreType: G.sel.tyre });
+  const me = new Kart(track, { id: G.myId, skill: G.sel.skill, tyreType: G.sel.tyre, trans: G.sel.trans });
   const sl = track.slot(slotOf(G.myId));
   me.placeAt(sl.dist, sl.d);
   G.me = me;
@@ -506,6 +533,7 @@ function startRace(data) {
   G.phase = 'race';
   ui.show('race');
   document.body.classList.add('racing');
+  document.body.classList.toggle('mt', me.trans === 'MT');
   ui.setSkillButton(SKILL_BY_ID[me.skill].type === 'active');
   hud.messages = [];
   sound.setFast(false);
@@ -688,7 +716,7 @@ function updateRace(dt, time) {
   // ---- audio
   const onRough = (me.surface === 'dirt' || me.surface === 'grass') && !me.airborne;
   sound.updateEngine({
-    speedFrac: Math.abs(me.vf) / PHYS.MAX_SPEED,
+    speedFrac: me.rpm,   // engine pitch follows the revs (drops on every upshift)
     throttle: active ? inp.throttle : (tRace < 0 ? inp.throttle * 0.6 : 0),
     boost: me.boostT > 0,
     skid: me.airborne ? 0 : me.skid,
@@ -712,6 +740,20 @@ function handleKartEvent(e, time) {
       break;
     case 'land':
       sound.sfx('land');
+      break;
+    case 'shift':
+      sound.sfx('shift', { manual: me.trans === 'MT' });
+      break;
+    case 'overRev':
+      sound.sfx('overRev');
+      hud.message('OVER REV!', '#ff8080', 0.7, 3);
+      break;
+    case 'driftStart':
+      sound.sfx('driftStart');
+      break;
+    case 'driftBoost':
+      sound.sfx('driftBoost', { level: e.level });
+      hud.message(e.level > 1 ? 'SUPER MINI TURBO!' : 'MINI TURBO!', e.level > 1 ? '#ff9a2a' : '#5ab4ff', 1.1, 4);
       break;
     case 'landBoost':
       sound.sfx('dash');
@@ -877,7 +919,17 @@ function buildHudState(remaining, cd, time) {
     lap: me.lap + 1,
     bestLap: me.bestLap,
     lastLap: me.lastLap,
-    speedKmh: Math.abs(me.vf) * 3.6,
+    speedKmh: Math.hypot(me.vx, me.vz) * 3.6,
+    gear: me.vf < -0.5 ? 'R' : me.gear,
+    rpm: me.rpm,
+    rpmValue: me.rpmValue,
+    trans: me.trans,
+    shiftLight: me.trans === 'MT' && me.gear < PHYS.GEARS.length && me.rpm >= 0.93,
+    drift: me.drifting ? {
+      charge: me.driftCharge / PHYS.DRIFT.charge2,
+      mark1: PHYS.DRIFT.charge1 / PHYS.DRIFT.charge2,
+      level: me.driftCharge >= PHYS.DRIFT.charge2 ? 2 : me.driftCharge >= PHYS.DRIFT.charge1 ? 1 : 0,
+    } : null,
     boost: me.boostT > 0,
     limiter: me.limiter,
     tyreType: me.tyreType,
