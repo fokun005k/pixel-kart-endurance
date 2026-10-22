@@ -33,7 +33,6 @@ const DURATIONS = [60, 300, 900];          // 60 = dev only (?dev=1)
 const COUNTDOWN_MS = 5000;                 // READY(2s) + 3,2,1
 const TICK_MS = 50;                        // 20Hz snapshots
 const TYRES = ['S', 'M', 'H'];
-const TRANS = ['AT', 'MT'];
 const SKILLS = ['meister', 'junkie', 'offroader', 'sliphunter', 'quickpit',
   'nitro', 'smoke', 'aerojump', 'overclock', 'highroller'];
 const BOT_SKILLS = ['meister', 'junkie', 'sliphunter', 'overclock', 'highroller'];
@@ -80,7 +79,7 @@ function lobbyView(room) {
     night: room.night,
     status: room.status,
     players: [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, trans: p.trans, color: p.color, isBot: p.isBot,
+      id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, color: p.color, isBot: p.isBot,
     })),
   };
 }
@@ -94,7 +93,6 @@ function makePlayer(id, name, room, isBot = false) {
     id, name, isBot,
     tyre: isBot ? 'M' : 'M',
     skill: isBot ? BOT_SKILLS[Math.floor(Math.random() * BOT_SKILLS.length)] : 'meister',
-    trans: 'AT',
     color: freeColor(room),
     state: null,
   };
@@ -237,7 +235,6 @@ io.on('connection', (socket) => {
     if (!p) return;
     if (TYRES.includes(data.tyre)) p.tyre = data.tyre;
     if (SKILLS.includes(data.skill)) p.skill = data.skill;
-    if (TRANS.includes(data.trans)) p.trans = data.trans;
     broadcastLobby(room);
   });
 

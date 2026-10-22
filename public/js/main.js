@@ -19,6 +19,8 @@ import { UI } from './ui.js';
 import { SmokeSystem } from './effects.js';
 import { mulberry32 } from './textures.js';
 import { TouchControls } from './touch.js';
+import { KeyBindings, TouchLayout } from './controls.js';
+import { Settings } from './settings.js';
 
 // ------------------------------------------------------------
 //  Rendering pipeline: 480x270 render target canvas, upscaled pixelated
@@ -133,9 +135,9 @@ function loadEnvironment(courseId, night) {
 function loadSel() {
   try {
     const s = JSON.parse(localStorage.getItem('pke.sel') || 'null');
-    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return { ...s, trans: s.trans === 'MT' ? 'MT' : 'AT' };
+    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return { tyre: s.tyre, skill: s.skill };
   } catch { /* ignore */ }
-  return { tyre: 'M', skill: 'meister', trans: 'AT' };
+  return { tyre: 'M', skill: 'meister' };
 }
 function saveSel() {
   try { localStorage.setItem('pke.sel', JSON.stringify(G.sel)); } catch { /* ignore */ }
@@ -197,12 +199,6 @@ const ui = new UI({
     ui.renderSelection(G.sel);
     net.updatePlayer(G.sel);
   },
-  onSelectTrans(t) {
-    G.sel.trans = t === 'MT' ? 'MT' : 'AT';
-    saveSel();
-    ui.renderSelection(G.sel);
-    net.updatePlayer(G.sel);
-  },
   onSelectSkill(s) {
     G.sel.skill = s;
     saveSel();
@@ -234,22 +230,19 @@ const ui = new UI({
   },
 });
 
+// player control settings (rebindable keys, smartphone button layout)
+const bindings = new KeyBindings();
+const touchLayout = new TouchLayout();
+
 const touch = new TouchControls({
   onSkill: () => { sound.ensure(); skillQueued = true; },
   onMenu: () => ui.setPause(!ui.paused),
   onRespawn: () => respawn(),
-  onShift: dir => shiftGear(dir),
+  layout: touchLayout,
 });
 hud.setTouch(touch.enabled);
 ui.syncAutoAccel(touch.autoAccel);
-ui._buildTransCards();          // rebuild with smartphone wording now that touch mode is known
-ui.renderSelection(G.sel);
-
-/** MT gear change from mouse / keys / touch buttons */
-function shiftGear(dir) {
-  if (G.phase !== 'race' || !G.me || G.me.trans !== 'MT' || ui.paused) return;
-  G.me.shift(dir);
-}
+const settings = new Settings({ bindings, layout: touchLayout, touch, toast: (m, ms) => ui.toast(m, ms) });
 
 function respawn() {
   if (G.phase === 'race' && G.me && G.race && G.race.active && G.me.pit.state !== 'work') G.me.respawn();
@@ -329,49 +322,65 @@ net.on('disconnect', () => {
 // ------------------------------------------------------------
 //  Input
 // ------------------------------------------------------------
+// held inputs: keyboard codes ("KeyW") and mouse buttons ("Mouse2")
 const keys = new Set();
 let skillQueued = false;
 const PIT_KEYS = { Digit1: 'S', Digit2: 'M', Digit3: 'H', Numpad1: 'S', Numpad2: 'M', Numpad3: 'H' };
 
+/** one-shot actions (skill, respawn, menu, mute) for a pressed key or mouse button */
+function pressAction(code) {
+  for (const a of bindings.actionsFor(code)) {
+    if (a === 'skill') skillQueued = true;
+    else if (a === 'pause') ui.setPause(!ui.paused);
+    else if (a === 'respawn') respawn();
+    else if (a === 'mute') {
+      const s = sound.settings;
+      const mute = !(s.bgmMute && s.seMute);
+      sound.setSettings({ bgmMute: mute, seMute: mute });
+      ui.toast(mute ? 'ミュート ON' : 'ミュート OFF', 1000);
+    }
+  }
+}
+
 window.addEventListener('keydown', (e) => {
   if (e.target && e.target.tagName === 'INPUT') return;
+  if (settings.busy) return;                       // typing into the settings dialog / editing the layout
   const racing = G.phase === 'race';
-  if (racing && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  // keep bound keys (Space, arrows, ...) from scrolling the page or triggering browser shortcuts
+  if (racing && (bindings.actionsFor(e.code).length || e.code.startsWith('Arrow') || e.code === 'Space')) e.preventDefault();
   keys.add(e.code);
   if (e.repeat || !racing) return;
-  if (e.code === 'Space') skillQueued = true;
-  if (e.code === 'Escape') ui.setPause(!ui.paused);
-  if (e.code === 'KeyM') {
-    const s = sound.settings;
-    const mute = !(s.bgmMute && s.seMute);
-    sound.setSettings({ bgmMute: mute, seMute: mute });
-    ui.toast(mute ? 'ミュート ON' : 'ミュート OFF', 1000);
-  }
-  if (e.code === 'KeyR') respawn();
+  pressAction(e.code);
   if (PIT_KEYS[e.code]) pitChoose(PIT_KEYS[e.code]);
-  if (e.code === 'KeyE') shiftGear(1);
-  if (e.code === 'KeyQ') shiftGear(-1);
 });
-// PC: right click = shift up, left click = shift down (MT). Mouse only, not taps / UI buttons.
-document.getElementById('stage').addEventListener('pointerdown', (e) => {
-  if (e.pointerType !== 'mouse' || G.phase !== 'race') return;
-  if (e.target.closest('button')) return;
-  if (e.button === 2) shiftGear(1);
-  else if (e.button === 0) shiftGear(-1);
-});
-document.getElementById('stage').addEventListener('contextmenu', (e) => { if (G.phase === 'race') e.preventDefault(); });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
+
+// mouse buttons can be bound like keys (only on the game screen, not on UI buttons)
+const stageEl = document.getElementById('stage');
+stageEl.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'mouse' || G.phase !== 'race' || settings.busy || ui.paused) return;
+  if (e.target.closest('button')) return;
+  const code = 'Mouse' + e.button;
+  keys.add(code);
+  pressAction(code);
+});
+window.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') keys.delete('Mouse' + e.button); });
+stageEl.addEventListener('contextmenu', (e) => { if (G.phase === 'race') e.preventDefault(); });
 window.addEventListener('blur', () => { keys.clear(); touch.reset(); });
 
+function held(action) {
+  const [a, b] = bindings.get(action);
+  return (a && keys.has(a)) || (b && keys.has(b));
+}
+
 function readInput() {
-  if (ui.paused) return { throttle: 0, brake: 0, steer: 0 };
-  const k = c => keys.has(c);
-  const brake = (k('KeyS') || k('ArrowDown') || touch.brake) ? 1 : 0;
-  let throttle = (k('KeyW') || k('ArrowUp') || touch.accel) ? 1 : 0;
+  if (ui.paused || settings.busy) return { throttle: 0, brake: 0, steer: 0, handbrake: false };
+  const brake = (held('brake') || touch.brake) ? 1 : 0;
+  let throttle = (held('accel') || touch.accel) ? 1 : 0;
   // smartphone auto-accelerate (paused while the pit menu is open so the kart can stay in the box)
   if (touch.enabled && touch.autoAccel && !brake && G.me && G.me.pit.state !== 'menu' && G.me.pit.state !== 'work') throttle = 1;
-  const keySteer = ((k('KeyD') || k('ArrowRight')) ? 1 : 0) - ((k('KeyA') || k('ArrowLeft')) ? 1 : 0);
-  const handbrake = k('ShiftLeft') || k('ShiftRight') || touch.hbrake;
+  const keySteer = (held('right') ? 1 : 0) - (held('left') ? 1 : 0);
+  const handbrake = held('drift') || touch.hbrake;
   return { throttle, brake, steer: keySteer || touch.steer, handbrake };
 }
 
@@ -474,7 +483,6 @@ function clearRace() {
   ui.setRotateHint(false);
   touch.reset();
   document.body.classList.remove('racing');
-  document.body.classList.remove('mt');
   for (const l of world.gantryLights) l.material.color.setHex(0x3a0808);
 }
 
@@ -497,7 +505,7 @@ function startRace(data) {
     lastBump: 0, wrenchT: 0, wrongWayT: 0, skillWasReady: true,
   };
 
-  const me = new Kart(track, { id: G.myId, skill: G.sel.skill, tyreType: G.sel.tyre, trans: G.sel.trans });
+  const me = new Kart(track, { id: G.myId, skill: G.sel.skill, tyreType: G.sel.tyre });
   const sl = track.slot(slotOf(G.myId));
   me.placeAt(sl.dist, sl.d);
   G.me = me;
@@ -533,7 +541,6 @@ function startRace(data) {
   G.phase = 'race';
   ui.show('race');
   document.body.classList.add('racing');
-  document.body.classList.toggle('mt', me.trans === 'MT');
   ui.setSkillButton(SKILL_BY_ID[me.skill].type === 'active');
   hud.messages = [];
   sound.setFast(false);
@@ -629,7 +636,7 @@ function updateRace(dt, time) {
   const ready = me.skillCd <= 0;
   if (SKILL_BY_ID[me.skill].type === 'active') {
     if (ready && !race.skillWasReady) sound.sfx('skillReady');
-    ui.updateSkillButton(SKILL_SHORT[me.skill] || 'SKILL', me.skillCd);
+    ui.updateSkillButton(SKILL_SHORT[me.skill] || 'SKILL', me.skillCd, bindings.describe('skill', true));
   }
   race.skillWasReady = ready;
   ui.setRotateHint(touch.enabled && window.innerHeight > window.innerWidth);
@@ -742,11 +749,7 @@ function handleKartEvent(e, time) {
       sound.sfx('land');
       break;
     case 'shift':
-      sound.sfx('shift', { manual: me.trans === 'MT' });
-      break;
-    case 'overRev':
-      sound.sfx('overRev');
-      hud.message('OVER REV!', '#ff8080', 0.7, 3);
+      sound.sfx('shift');
       break;
     case 'driftStart':
       sound.sfx('driftStart');
@@ -923,8 +926,7 @@ function buildHudState(remaining, cd, time) {
     gear: me.vf < -0.5 ? 'R' : me.gear,
     rpm: me.rpm,
     rpmValue: me.rpmValue,
-    trans: me.trans,
-    shiftLight: me.trans === 'MT' && me.gear < PHYS.GEARS.length && me.rpm >= 0.93,
+    skillKey: bindings.describe('skill', true),
     drift: me.drifting ? {
       charge: me.driftCharge / PHYS.DRIFT.charge2,
       mark1: PHYS.DRIFT.charge1 / PHYS.DRIFT.charge2,

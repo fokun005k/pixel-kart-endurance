@@ -1,7 +1,7 @@
 // ============================================================
 //  DOM UI: title / lobby / pit menu / pause / results / audio controls
 // ============================================================
-import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT, TRANSMISSIONS } from './config.js';
+import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT } from './config.js';
 import { sound } from './audio.js';
 import { fmtLap, renderTrackMap } from './hud.js';
 
@@ -74,7 +74,6 @@ export class UI {
 
     this._mountAudio();
     this._buildTyreCards($('tyre-select'), t => h.onSelectTyre(t), false);
-    this._buildTransCards();
     this._buildSkillCards();
     this._buildTyreCards($('pit-choices'), t => h.onPitChoose(t), true);
   }
@@ -211,21 +210,6 @@ export class UI {
     if (isPit) this.pitCards = cards; else this.tyreCards = cards;
   }
 
-  _buildTransCards() {
-    const c = $('trans-select');
-    c.innerHTML = '';
-    this.transCards = {};
-    const touchDesc = { AT: 'ギアは自動で切り替わる。操作がかんたん。', MT: '最高速度+5km/h。画面の ▲ / ▼ ボタンで自分でシフト操作。' };
-    const touch = document.body.classList.contains('touch');
-    for (const T of Object.values(TRANSMISSIONS)) {
-      const card = el('div', 'trans-card');
-      card.innerHTML = `<div class="tr-head"><span class="tr-badge">${T.id}</span>${T.name}</div><div class="tr-desc">${touch ? touchDesc[T.id] : T.desc}</div>`;
-      card.onclick = () => { sound.sfx('click'); this.h.onSelectTrans(T.id); };
-      c.appendChild(card);
-      this.transCards[T.id] = card;
-    }
-  }
-
   _buildSkillCards() {
     const c = $('skill-select');
     c.innerHTML = '';
@@ -282,7 +266,6 @@ export class UI {
         <span class="pname">${esc(p.name)}</span>
         ${p.id === room.hostId ? '<span class="tag host">HOST</span>' : ''}
         ${p.isBot ? '<span class="tag cpu">CPU</span>' : ''}
-        <span class="tag">${p.trans === 'MT' ? 'MT' : 'AT'}</span>
         <span class="tyre-dot" style="background:${T.color}">${p.tyre}</span>
         <span class="pskill">${skill ? skill.name : ''}</span>`;
       list.appendChild(li);
@@ -326,7 +309,6 @@ export class UI {
   renderSelection(sel) {
     for (const [id, c] of Object.entries(this.tyreCards)) c.classList.toggle('sel', id === sel.tyre);
     for (const [id, c] of Object.entries(this.skillCards)) c.classList.toggle('sel', id === sel.skill);
-    for (const [id, c] of Object.entries(this.transCards)) c.classList.toggle('sel', id === (sel.trans || 'AT'));
   }
 
   // ---------------- pit ----------------
@@ -355,12 +337,13 @@ export class UI {
   setSkillButton(visible) { $('skill-btn').classList.toggle('hidden', !visible); }
 
   /** label of the on-screen skill button: name + READY / cooldown seconds */
-  updateSkillButton(name, cd) {
+  updateSkillButton(name, cd, keyText = '') {
     const sub = cd > 0 ? `CT ${Math.ceil(cd)}` : 'READY';
-    if (this._skillLabel === name + sub) return;
-    this._skillLabel = name + sub;
+    const shown = document.body.classList.contains('touch') || !keyText ? sub : `${keyText} ${cd > 0 ? sub : ''}`;
+    if (this._skillLabel === name + shown) return;
+    this._skillLabel = name + shown;
     $('skill-btn-label').textContent = name;
-    $('skill-btn-sub').textContent = document.body.classList.contains('touch') ? sub : `SPACE ${cd > 0 ? sub : ''}`;
+    $('skill-btn-sub').textContent = shown;
     $('skill-btn').classList.toggle('cooldown', cd > 0);
   }
 

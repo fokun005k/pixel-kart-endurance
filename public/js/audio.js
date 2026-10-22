@@ -427,16 +427,10 @@ class SoundEngine {
       case 'error':
         this.tone(t, 220, 0.2, 'square', 0.12, B, { slideTo: 110 });
         break;
-      case 'shift': {
-        // gear change: mechanical clunk (+ louder for manual)
-        const v = opt.manual ? 1 : 0.5;
-        this.noiseHit(t, 0.04, 0.25 * v, B, { type: 'bandpass', freq: 1800, q: 2 });
-        this.tone(t, 140, 0.06, 'square', 0.12 * v, B, { slideTo: 90 });
-        break;
-      }
-      case 'overRev':
-        this.tone(t, 330, 0.12, 'square', 0.12, B, { sustain: 0.9 });
-        this.tone(t + 0.13, 330, 0.12, 'square', 0.12, B, { sustain: 0.9 });
+      case 'shift':
+        // automatic gear change: soft mechanical clunk
+        this.noiseHit(t, 0.04, 0.12, B, { type: 'bandpass', freq: 1800, q: 2 });
+        this.tone(t, 140, 0.06, 'square', 0.06, B, { slideTo: 90 });
         break;
       case 'driftStart':
         this.noiseHit(t, 0.25, 0.18, B, { type: 'bandpass', freq: 2600, freqTo: 1400, q: 3 });

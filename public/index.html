@@ -19,18 +19,18 @@
     <canvas id="gl"></canvas>
     <canvas id="hud" width="960" height="540"></canvas>
 
-    <!-- smartphone controls (shown only on touch devices while racing) -->
+    <!-- smartphone controls (positions come from the saved layout) -->
     <div id="touch-ui">
       <div id="steer-zone">
         <div id="steer-base"><div id="steer-knob"></div></div>
         <span class="steer-hint">◀ スライドでハンドル ▶</span>
       </div>
+      <button id="tc-left" class="tc-btn steer-btn" type="button">◀</button>
+      <button id="tc-right" class="tc-btn steer-btn" type="button">▶</button>
       <button id="tc-brake" class="tc-btn" type="button">BRAKE</button>
       <button id="tc-accel" class="tc-btn accel" type="button">ACCEL</button>
       <button id="tc-hbrake" class="tc-btn" type="button">DRIFT<small>サイド</small></button>
-      <button id="tc-gearup" class="tc-btn gear mt-only" type="button">▲<small>SHIFT</small></button>
-      <button id="tc-geardown" class="tc-btn gear mt-only" type="button">▼<small>SHIFT</small></button>
-      <div class="tc-top">
+      <div id="tc-menu-group" class="tc-top">
         <button id="tc-menu" class="tc-small" type="button" aria-label="メニュー">II</button>
         <button id="tc-respawn" class="tc-small" type="button" aria-label="コースに復帰">R</button>
         <button id="tc-fullscreen" class="tc-small fs-only" type="button" aria-label="全画面">⛶</button>
@@ -67,30 +67,20 @@
       </div>
       <div id="title-error" class="error"></div>
 
-      <button class="btn small fs-btn touch-only fs-only" type="button">⛶ 全画面で遊ぶ</button>
-
-      <h3>サウンド</h3>
-      <div class="audio-mount"></div>
+      <div class="title-tools">
+        <button class="btn btn-settings" type="button">⚙ 設定（操作・ボタン配置・音）</button>
+        <button class="btn fs-btn touch-only fs-only" type="button">⛶ 全画面</button>
+      </div>
 
       <details class="help">
         <summary>操作方法</summary>
-        <ul class="desktop-help">
-          <li><b>W / ↑</b> アクセル　<b>S / ↓</b> ブレーキ・バック</li>
-          <li><b>A D / ← →</b> ハンドル</li>
-          <li><b>SHIFT</b> サイドブレーキ（曲がりながら押すとドリフト、離すとミニターボ）</li>
-          <li><b>右クリック / E</b> シフトアップ　<b>左クリック / Q</b> シフトダウン（MTのみ）</li>
-          <li><b>SPACE</b> アクティブスキル発動</li>
-          <li><b>1 / 2 / 3</b> ピットでタイヤ選択（ソフト/ミディアム/ハード）</li>
-          <li><b>R</b> コースに復帰　<b>M</b> ミュート　<b>ESC</b> メニュー</li>
-        </ul>
+        <ul class="desktop-help" id="help-keys"></ul>
         <ul class="touch-help">
-          <li><b>画面左側</b>を左右にスライドしてハンドル</li>
-          <li><b>ACCEL / BRAKE</b> ボタン（自動アクセルON時はブレーキだけでOK）</li>
-          <li><b>DRIFT</b> サイドブレーキ（曲がりながら押すとドリフト）</li>
-          <li><b>▲ / ▼</b> シフトアップ / ダウン（MTのみ）</li>
-          <li><b>SKILL</b> ボタンでアクティブスキル発動</li>
-          <li><b>II</b> メニュー　<b>R</b> コースに復帰</li>
-          <li>横向き・全画面がおすすめです</li>
+          <li><b>ハンドル</b>：画面左側を左右にスライド（設定で ◀ ▶ ボタンにも変更可）</li>
+          <li><b>ACCEL / BRAKE</b>：自動アクセルONならブレーキだけでOK</li>
+          <li><b>DRIFT</b>：曲がりながら押すとドリフト、離すとミニターボ</li>
+          <li><b>SKILL</b>：アクティブスキル発動　<b>II</b> メニュー　<b>R</b> コースに復帰</li>
+          <li>ボタンの位置は「⚙ 設定 → スマホ操作」で自由に変えられます</li>
         </ul>
       </details>
     </div>
@@ -105,7 +95,10 @@
           <span id="room-id" class="room-id">-----</span>
           <button id="btn-copy" class="btn small" type="button">コピー</button>
         </div>
-        <button id="btn-leave" class="btn small danger" type="button">退出</button>
+        <div class="head-tools">
+          <button class="btn small btn-settings" type="button">⚙ 設定</button>
+          <button id="btn-leave" class="btn small danger" type="button">退出</button>
+        </div>
       </div>
       <div class="invite-box">
         <span class="label">招待リンク</span>
@@ -126,15 +119,6 @@
 
           <h2>レース時間 <small id="duration-note"></small></h2>
           <div id="duration-select" class="seg"></div>
-
-          <div class="touch-only">
-            <h2>スマホ操作</h2>
-            <label class="toggle"><input type="checkbox" class="auto-accel"> 自動アクセル（ブレーキを押していない間は自動で加速）</label>
-            <button class="btn small fs-btn fs-only" type="button">⛶ 全画面</button>
-          </div>
-
-          <h2>サウンド</h2>
-          <div class="audio-mount"></div>
         </div>
 
         <div class="col wide">
@@ -142,8 +126,6 @@
           <div id="course-select" class="course-grid"></div>
           <h2>時間帯</h2>
           <div id="time-select" class="seg"></div>
-          <h2>ミッション</h2>
-          <div id="trans-select" class="trans-cards"></div>
           <h2>初期タイヤ</h2>
           <div id="tyre-select" class="tyre-cards"></div>
           <h2>個性（スキル）</h2>
@@ -180,12 +162,92 @@
     <div class="panel pause-panel">
       <h2>MENU</h2>
       <p class="note">オンラインレースは止まりません</p>
-      <div class="audio-mount"></div>
-      <label class="toggle touch-only"><input type="checkbox" class="auto-accel"> 自動アクセル</label>
-      <button id="btn-resume" class="btn" type="button">戻る</button>
-      <button id="btn-respawn" class="btn" type="button">コースに復帰（R）</button>
+      <button id="btn-resume" class="btn big" type="button">レースに戻る</button>
+      <button id="btn-respawn" class="btn" type="button">コースに復帰</button>
+      <button class="btn btn-settings" type="button">⚙ 設定（操作・ボタン配置・音）</button>
       <button class="btn fs-btn touch-only fs-only" type="button">⛶ 全画面</button>
+      <div class="audio-mount"></div>
       <button id="btn-quit" class="btn danger" type="button">レースを退出してタイトルへ</button>
+    </div>
+  </div>
+
+  <!-- ================= SETTINGS ================= -->
+  <div id="settings-modal" class="overlay hidden" role="dialog" aria-label="設定">
+    <div class="panel settings-panel">
+      <div class="settings-head">
+        <h2>⚙ 設定</h2>
+        <button id="btn-settings-close" class="btn small" type="button">閉じる ✕</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="tab" data-tab="keys" type="button">⌨ キー操作（PC）</button>
+        <button class="tab" data-tab="touch" type="button">📱 スマホ操作</button>
+        <button class="tab" data-tab="sound" type="button">♪ サウンド</button>
+      </div>
+
+      <div class="tab-body" data-tab="keys">
+        <p class="note">変えたい欄をクリック → 割り当てたいキー（マウスのボタンも可）を押してください。<br><b>Esc</b> でキャンセル、<b>Delete</b> でその欄を空にします。1つの操作に2つまで割り当てられます。</p>
+        <table class="keymap">
+          <thead><tr><th>操作</th><th>キー 1</th><th>キー 2</th></tr></thead>
+          <tbody id="keymap-body"></tbody>
+        </table>
+        <p class="note">ピットでのタイヤ選択は数字キー <b>1</b> / <b>2</b> / <b>3</b>（固定）です。</p>
+        <button id="btn-keys-reset" class="btn small" type="button">キー設定を初期状態に戻す</button>
+      </div>
+
+      <div class="tab-body" data-tab="touch">
+        <div class="setting-row">
+          <span class="s-label">ハンドル操作</span>
+          <div class="seg" id="steer-mode">
+            <button class="btn small" data-mode="slide" type="button">スライド（画面左側）</button>
+            <button class="btn small" data-mode="buttons" type="button">◀ ▶ ボタン</button>
+          </div>
+        </div>
+        <div class="setting-row slide-only">
+          <span class="s-label">スライドの感度</span>
+          <input type="range" id="steer-sens" min="50" max="200" step="5">
+          <span id="steer-sens-val" class="s-val"></span>
+        </div>
+        <div class="setting-row">
+          <label class="toggle"><input type="checkbox" class="auto-accel"> 自動アクセル（ブレーキを押していない間は自動で加速）</label>
+        </div>
+        <button id="btn-layout-edit" class="btn big" type="button">✥ ボタンの配置を編集する</button>
+        <p class="note">ボタンをドラッグして好きな位置へ動かせます。選んだボタンの大きさや、全体の透明度も変えられます。</p>
+        <div class="setting-row">
+          <button id="btn-layout-reset" class="btn small" type="button">ボタン配置を初期状態に戻す</button>
+          <button class="btn small fs-btn fs-only touch-only" type="button">⛶ 全画面</button>
+        </div>
+      </div>
+
+      <div class="tab-body" data-tab="sound">
+        <div class="audio-mount"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= TOUCH LAYOUT EDITOR ================= -->
+  <div id="layout-editor" class="hidden">
+    <div class="le-bar">
+      <div class="le-row">
+        <b>✥ ボタン配置の編集</b>
+        <span class="le-hint">ドラッグで移動 ・ タップで選択</span>
+        <button id="le-move" class="btn small" type="button" title="このバーを上下に移動">⇅ 上下</button>
+        <button id="le-fold" class="btn small" type="button" title="このバーを小さくする">▬ たたむ</button>
+        <button id="le-save-mini" class="btn small on le-mini-only" type="button">保存</button>
+      </div>
+      <div class="le-row">
+        <span>選択中：<b id="le-selected">ACCEL</b></span>
+        <label class="le-slider">大きさ <input type="range" id="le-size" min="60" max="170" step="5"><span id="le-size-val"></span></label>
+        <label class="le-slider">透明度 <input type="range" id="le-opacity" min="25" max="100" step="5"><span id="le-opacity-val"></span></label>
+      </div>
+      <div class="le-row">
+        <span>ハンドル：</span>
+        <button class="btn small le-steer" data-mode="slide" type="button">スライド</button>
+        <button class="btn small le-steer" data-mode="buttons" type="button">◀ ▶ ボタン</button>
+        <span class="le-spacer"></span>
+        <button id="le-reset" class="btn small" type="button">初期配置</button>
+        <button id="le-cancel" class="btn small danger" type="button">キャンセル</button>
+        <button id="le-save" class="btn small on" type="button">保存して閉じる</button>
+      </div>
     </div>
   </div>
 

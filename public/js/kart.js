@@ -12,15 +12,14 @@ function wrapAngle(a) {
 }
 
 export class Kart {
-  constructor(track, { id, skill = 'meister', tyreType = 'M', trans = 'AT' } = {}) {
+  constructor(track, { id, skill = 'meister', tyreType = 'M' } = {}) {
     this.track = track;
     this.id = id;
     this.skill = skill;
     this.tyreType = tyreType;
     this.tyre = 100;
 
-    // transmission
-    this.trans = trans === 'MT' ? 'MT' : 'AT';
+    // automatic transmission
     this.gear = 1;
     this.shiftT = 0;        // power cut while a shift is in progress
     this.rpm = 0;           // 0..~1.05 fraction of the rev range
@@ -96,7 +95,7 @@ export class Kart {
   }
 
   // ------------------------------------------------------------------
-  //  Transmission
+  //  Automatic transmission (gear & revs are shown on the HUD)
   // ------------------------------------------------------------------
   gearTop(g = this.gear) { return this.nominalTop * PHYS.GEARS[g - 1]; }
 
@@ -105,22 +104,8 @@ export class Kart {
 
   _setGear(g, dir) {
     this.gear = g;
-    this.shiftT = this.trans === 'MT' ? PHYS.SHIFT_TIME_MT : PHYS.SHIFT_TIME_AT;
+    this.shiftT = PHYS.SHIFT_TIME;
     this.events.push({ type: 'shift', gear: g, dir });
-  }
-
-  /** manual shift (MT only). dir: +1 up / -1 down. Returns true when it shifted. */
-  shift(dir) {
-    if (this.trans !== 'MT' || this.shiftT > 0) return false;
-    const g = this.gear + dir;
-    if (g < 1 || g > PHYS.GEARS.length) return false;
-    // over-rev protection: refuse a downshift that would blow past the red line
-    if (dir < 0 && this.vf > this.gearTop(g) * 1.03) {
-      this.events.push({ type: 'overRev' });
-      return false;
-    }
-    this._setGear(g, dir);
-    return true;
   }
 
   applyBoost(cfg, mul = 1) {
@@ -242,8 +227,8 @@ export class Kart {
     const boosting = this.boostT > 0;
     const boostMul = boosting ? 1 + this.boostAmt : 1;
 
-    // nominal top speed (MT gets +5 km/h); gear ratios are based on it
-    this.nominalTop = (PHYS.MAX_SPEED + (this.trans === 'MT' ? PHYS.MT_TOP_BONUS : 0)) * topF;
+    // nominal top speed; gear ratios are based on it
+    this.nominalTop = PHYS.MAX_SPEED * topF;
     let vmax = this.nominalTop * surfSpeed * (1 + slipBonus) * boostMul;
     if (this.smokeSlowT > 0) vmax *= PHYS.SMOKE_SLOW;
     if (this.limiter) vmax = Math.min(vmax, sk === 'quickpit' ? PIT.LIMIT_QUICK : PIT.LIMIT);
@@ -263,7 +248,7 @@ export class Kart {
     // ---- transmission
     const nG = PHYS.GEARS.length;
     if (this.shiftT > 0) this.shiftT -= dt;
-    if (this.trans === 'AT' && this.shiftT <= 0 && !this.airborne) {
+    if (this.shiftT <= 0 && !this.airborne) {
       const r = vf / this.gearTop();
       if (this.gear < nG && (r >= 1 || (r >= PHYS.AT_UP && throttle > 0))) this._setGear(this.gear + 1, 1);
       else if (this.gear > 1 && vf < this.gearTop(this.gear - 1) * PHYS.AT_DOWN) {
@@ -272,8 +257,6 @@ export class Kart {
         this._setGear(Math.min(g, this.gear - 1), -1);
       }
     }
-    // MT: "clutch in" when nearly stopped in a high gear so the kart never bogs down after a crash
-    if (this.trans === 'MT' && Math.hypot(vf, vr) < 1.5 && this.gear > 2) this.gear = 1;
     const gTop = this.gearTop();
     const topGear = this.gear === nG;
     const revR = Math.max(0, vf) / gTop;
@@ -308,7 +291,7 @@ export class Kart {
       // ---- handbrake: starts a drift when turning at speed, otherwise just brakes
       const D = PHYS.DRIFT;
       const sp0 = Math.hypot(vf, vr);
-      if (hb && !this.drifting && sp0 > D.minSpeed && Math.abs(this.steer) > 0.15) {
+      if (hb && !this.drifting && sp0 > D.minSpeed && Math.abs(this.steer) > D.minSteer) {
         this.drifting = true;
         this.driftDir = Math.sign(this.steer);
         this.driftCharge = 0;

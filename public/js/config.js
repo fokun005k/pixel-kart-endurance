@@ -75,26 +75,21 @@ export const PHYS = {
   OVERCLOCK_TIME: 90, OVERCLOCK_MUL: 1.2,
   HIGHROLLER_MUL: 1.12, HIGHROLLER_WEAR: 1.25,
 
-  // ---- transmission: 6 speeds. gear top speed = nominal top speed x ratio
+  // ---- automatic transmission: 6 speeds. gear top speed = nominal top speed x ratio
   GEARS: [0.27, 0.43, 0.58, 0.72, 0.86, 1.0],
   GEAR_ACC: [1.62, 1.46, 1.31, 1.18, 1.07, 0.98], // torque multiplier per gear
   RPM_IDLE: 2000, RPM_RED: 12000,
-  SHIFT_TIME_AT: 0.15, SHIFT_TIME_MT: 0.08,        // power cut while shifting
-  AT_UP: 0.96, AT_DOWN: 0.66,                      // automatic shift points (fraction of gear top)
-  MT_TOP_BONUS: 5 / 3.6,                           // MT: +5 km/h top speed
+  SHIFT_TIME: 0.15,                                // power cut while shifting
+  AT_UP: 0.96, AT_DOWN: 0.66,                      // shift points (fraction of gear top)
 
   // ---- handbrake drift (angles in radians, rates in rad/s)
+  // tuned to be forgiving: gentle rotation, capped angle, the kart keeps going where it points
   DRIFT: {
-    minSpeed: 9, flick: 0.1, yaw: 1.7, follow: 1.0, followRelease: 2.6, maxSlip: 0.8,
-    drag: 2.4, dragRelease: 1.0, slipDrag: 9, brake: 9, chargeSlip: 0.21, charge1: 0.7, charge2: 1.5,
+    minSpeed: 7, minSteer: 0.05, flick: 0.08, yaw: 1.35, follow: 1.35, followRelease: 3.2, maxSlip: 0.6,
+    drag: 1.5, dragRelease: 0.6, slipDrag: 5, brake: 6, chargeSlip: 0.14, charge1: 0.5, charge2: 1.2,
   },
   DRIFT_BOOST1: { amt: 0.15, dur: 0.7, accel: 1.8, kick: 2.5 },
   DRIFT_BOOST2: { amt: 0.25, dur: 1.1, accel: 2.0, kick: 3.5 },
-};
-
-export const TRANSMISSIONS = {
-  AT: { id: 'AT', name: 'オートマ（AT）', desc: 'ギアは自動で切り替わる。操作がかんたん。' },
-  MT: { id: 'MT', name: 'マニュアル（MT）', desc: '最高速度+5km/h。自分でシフト操作（PC: 右クリック/E=シフトアップ、左クリック/Q=シフトダウン）。' },
 };
 
 // ---------------- Tyres ----------------

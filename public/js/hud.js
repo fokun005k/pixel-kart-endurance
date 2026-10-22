@@ -294,7 +294,7 @@ export class Hud {
       this._drawRevBar(x + 8, y + 8, w - 16, 8, st.rpm, st.shiftLight, time);
       this._drawGearBox(x + 8, y + 22, 46, 54, st.gear, 6);
       drawText(g, `${rpmText} RPM`, x + 62, y + 24, 1, '#a8c8ff');
-      drawText(g, st.trans, x + 62, y + 66, 1, '#ffd23b');
+      drawText(g, 'GEAR', x + 62, y + 66, 1, '#ffd23b');
       drawText(g, spd, x + w - 64, y + 30, 6, st.boost ? '#7cf0ff' : '#ffffff', 'right');
       drawText(g, 'KM/H', x + w - 10, y + 58, 2, '#a8c8ff', 'right');
       if (st.limiter) drawText(g, 'PIT', x + w - 10, y + 26, 2, '#f0c020', 'right');
@@ -305,7 +305,7 @@ export class Hud {
     drawText(g, rpmText, x + 32, y + 27, 2, st.rpm >= 0.86 ? '#ff6060' : '#ffffff');
     if (st.limiter) drawText(g, 'PIT LIMIT', x + w - 10, y + 28, 1, '#f0c020', 'right');
     this._drawGearBox(x + 10, y + 44, 58, 66, st.gear, 7);
-    drawText(g, st.trans, x + 39, y + 114, 1, '#ffd23b', 'center');
+    drawText(g, 'GEAR', x + 39, y + 114, 1, '#ffd23b', 'center');
     drawText(g, spd, x + w - 12, y + 46, 7, st.boost ? '#7cf0ff' : '#ffffff', 'right');
     drawText(g, 'KM/H', x + w - 12, y + 102, 2, '#a8c8ff', 'right');
   }
@@ -393,7 +393,7 @@ export class Hud {
         const on = Math.floor(time * 3) % 2 === 0;
         g.fillStyle = on ? '#40e070' : '#30a050';
         g.fillRect(bx + 2, by + 2, bw - 4, 12);
-        drawText(g, 'READY! [SPACE]', bx + bw / 2, by + 4, 1, '#06200e', 'center', null);
+        drawText(g, st.skillKey ? `READY! [${st.skillKey}]` : 'READY!', bx + bw / 2, by + 4, 1, '#06200e', 'center', null);
       } else {
         g.fillStyle = '#e0a020';
         g.fillRect(bx + 2, by + 2, Math.round((bw - 4) * frac), 12);
