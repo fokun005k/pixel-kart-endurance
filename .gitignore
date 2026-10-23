@@ -3,3 +3,4 @@ node_modules/
 .cloudflared/
 .claude/
 *.log
+data/

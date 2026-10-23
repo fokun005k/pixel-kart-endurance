@@ -4,6 +4,7 @@
 import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT } from './config.js';
 import { sound } from './audio.js';
 import { fmtLap, renderTrackMap } from './hud.js';
+import { fetchRanking, RANKED_DURATIONS } from './records.js';
 
 const $ = id => document.getElementById(id);
 
@@ -15,6 +16,33 @@ function el(tag, cls, html) {
 }
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+const MAX_GHOSTS = 4;
+const WEATHER_LABEL = { rain: '☂ 雨', fog: '🌫 霧' };
+
+/** ids of ranking entries set by this browser (highlighted in the tables) */
+export function myRecordIds() {
+  try { return new Set(JSON.parse(localStorage.getItem('pke.myRecords') || '[]')); } catch { return new Set(); }
+}
+export function addMyRecordId(id) {
+  const ids = [...myRecordIds(), id].slice(-200);
+  try { localStorage.setItem('pke.myRecords', JSON.stringify(ids)); } catch { /* ignore */ }
+}
+
+function distText(dist, trackLen) {
+  const laps = Math.max(0, Math.floor(dist));
+  const pct = Math.round((Math.max(0, dist) - laps) * 100);
+  return { km: (Math.max(0, dist) * trackLen / 1000).toFixed(2), laps: `${laps}周+${pct}%` };
+}
+
+function tyreSeq(tyres) {
+  return `<span class="tyre-seq">${tyres.map(t => `<i style="background:${(TYRES[t] || TYRES.M).color}">${t}</i>`).join('<b>›</b>')}</span>`;
+}
+
+function fmtDate(ms) {
+  const d = new Date(ms);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
 const TYRE_STATS = {
@@ -45,6 +73,14 @@ export class UI {
     $('btn-remove-bot').onclick = () => { sound.sfx('click'); h.onRemoveBot(); };
     $('btn-start').onclick = () => { sound.sfx('click'); h.onStart(); };
     $('btn-ready').onclick = () => { sound.sfx('click'); h.onReady(!this.myReady); };
+
+    // ranking
+    this.rankCache = new Map();   // "course-duration" -> {t, entries}
+    this.rankView = { course: 0, duration: 300 };
+    for (const b of document.querySelectorAll('.btn-ranking')) b.onclick = () => { sound.ensure(); sound.sfx('click'); this.openRanking(); };
+    $('btn-ranking-close').onclick = () => { sound.sfx('click'); $('ranking-modal').classList.add('hidden'); };
+    $('ranking-modal').addEventListener('pointerdown', (e) => { if (e.target.id === 'ranking-modal') $('ranking-modal').classList.add('hidden'); });
+    $('ranking-course').onchange = () => { this.rankView.course = Number($('ranking-course').value); this._renderRanking(); };
 
     // results / pause
     $('btn-back-lobby').onclick = () => { sound.sfx('click'); h.onBackToLobby(); };
@@ -248,11 +284,134 @@ export class UI {
     const desc = el('p', 'course-desc');
     desc.id = 'course-desc';
     c.after(desc);
+    this.tracks = tracks;
+    $('ranking-course').innerHTML = courses.map((co, i) => `<option value="${i}">${i + 1}. ${esc(co.name)}（${co.en}）</option>`).join('');
+  }
+
+  // ---------------- ranking ----------------
+  /** cached ranking of a course & race length (refreshes after 20 s) */
+  async ranking(course, duration, force = false) {
+    const key = `${course}-${duration}`;
+    const c = this.rankCache.get(key);
+    if (!force && c && performance.now() - c.t < 20000) return c.entries;
+    const entries = await fetchRanking(course, duration);
+    this.rankCache.set(key, { t: performance.now(), entries });
+    return entries;
+  }
+
+  invalidateRanking() { this.rankCache.clear(); }
+
+  openRanking(course = null, duration = null) {
+    if (course === null && this.room) course = this.room.course;
+    if (duration === null && this.room && RANKED_DURATIONS.includes(this.room.duration)) duration = this.room.duration;
+    if (course !== null) this.rankView.course = course;
+    if (duration !== null) this.rankView.duration = duration;
+    $('ranking-modal').classList.remove('hidden');
+    this._renderRanking(true);
+  }
+
+  async _renderRanking(force = false) {
+    const { course, duration } = this.rankView;
+    $('ranking-course').value = String(course);
+    const ds = $('ranking-duration');
+    ds.innerHTML = '';
+    for (const [sec, label] of [[300, '5分レース'], [900, '15分レース']]) {
+      const b = el('button', 'btn small' + (duration === sec ? ' on' : ''), label);
+      b.type = 'button';
+      b.onclick = () => { sound.sfx('click'); this.rankView.duration = sec; this._renderRanking(); };
+      ds.appendChild(b);
+    }
+    const body = $('ranking-body');
+    body.innerHTML = '<tr><td colspan="7" class="ranking-empty">読み込み中…</td></tr>';
+    const entries = await this.ranking(course, duration, force);
+    if (this.rankView.course !== course || this.rankView.duration !== duration) return;
+    body.innerHTML = '';
+    if (!entries.length) {
+      body.innerHTML = '<tr><td colspan="7" class="ranking-empty">まだ記録がありません。このコースでレースを最後まで走りきると記録されます。</td></tr>';
+      return;
+    }
+    const mine = myRecordIds();
+    const trackLen = this.tracks ? this.tracks[course].length : 1500;
+    entries.forEach((e, i) => {
+      const tr = el('tr', 'entry' + (mine.has(e.id) ? ' mine' : ''));
+      const dt = distText(e.dist, trackLen);
+      const skill = SKILL_BY_ID[e.skill] || SKILL_BY_ID.none;
+      tr.innerHTML = `
+        <td class="pos">${i + 1}</td>
+        <td><span class="chip" style="background:${KART_COLORS[e.color % KART_COLORS.length]}"></span>${esc(e.name)}</td>
+        <td>${dt.km} km<br><small>${dt.laps}</small></td>
+        <td>${fmtLap(e.bestLap)}</td>
+        <td>${esc(skill.name)}</td>
+        <td>${tyreSeq(e.tyres)}</td>
+        <td>${fmtDate(e.date)}</td>`;
+      const detail = el('tr', 'detail hidden');
+      const best = Math.min(...e.laps);
+      const laps = e.laps.map((t, k) => `<span class="${t === best ? 'best' : ''}">L${k + 1} ${fmtLap(t)}</span>`).join('');
+      const cond = [
+        e.weather.length ? e.weather.map(w => WEATHER_LABEL[w]).join('・') : '☀ 晴れ',
+        e.night ? '☾ 夜' : '昼',
+        `${e.field}台で走行`,
+        `ピット ${Math.max(0, e.tyres.length - 1)}回`,
+      ];
+      if (e.noSkills) cond.push('個性なしルール');
+      detail.innerHTML = `<td colspan="7">${cond.join(' ・ ')}<div class="laps">${laps || 'ラップ記録なし'}</div></td>`;
+      tr.onclick = () => detail.classList.toggle('hidden');
+      body.append(tr, detail);
+    });
+  }
+
+  /** lobby: pick ranking entries of this course & length to race as ghosts */
+  async _renderGhosts(room, isHost) {
+    const list = $('ghost-list');
+    const note = $('ghost-note');
+    note.textContent = isHost ? '（ホストが選択・最大4台）' : '（ホストが選択）';
+    list.classList.toggle('locked', !isHost);
+    if (!RANKED_DURATIONS.includes(room.duration)) {
+      list.innerHTML = '<div class="ghost-empty">テスト1分のレースは記録・ゴーストの対象外です。</div>';
+      return;
+    }
+    const key = `${room.course}-${room.duration}`;
+    const entries = await this.ranking(room.course, room.duration);
+    if (!this.room || `${this.room.course}-${this.room.duration}` !== key) return;
+    const sel = new Set(this.room.ghosts || []);
+    list.innerHTML = '';
+    if (!entries.length) {
+      list.innerHTML = '<div class="ghost-empty">このコース・レース時間の記録はまだありません。走りきると上位10位までが記録されます。</div>';
+      return;
+    }
+    const trackLen = this.tracks ? this.tracks[room.course].length : 1500;
+    entries.forEach((e, i) => {
+      const row = el('label', 'ghost-row' + (sel.has(e.id) ? ' on' : ''));
+      row.style.borderLeftColor = KART_COLORS[e.color % KART_COLORS.length];
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = sel.has(e.id);
+      cb.disabled = !isHost;
+      cb.onchange = () => {
+        const ids = (this.room.ghosts || []).filter(id => id !== e.id);
+        if (cb.checked) {
+          if (ids.length >= MAX_GHOSTS) { cb.checked = false; this.toast(`ゴーストは最大${MAX_GHOSTS}台までです`); return; }
+          ids.push(e.id);
+        }
+        sound.sfx('click');
+        this.h.onGhosts(ids);
+      };
+      const dt = distText(e.dist, trackLen);
+      const skill = SKILL_BY_ID[e.skill] || SKILL_BY_ID.none;
+      row.append(cb);
+      row.insertAdjacentHTML('beforeend', `
+        <span class="g-rank">${i + 1}位</span>
+        <span class="g-name">${esc(e.name)}</span>
+        <span class="g-dist">${dt.km}km ・ ${fmtLap(e.bestLap)} ・ ${esc(skill.name)}</span>`);
+      list.appendChild(row);
+    });
   }
 
   // ---------------- lobby ----------------
   renderLobby(room, myId, sel) {
     const isHost = room.hostId === myId;
+    this.room = room;
+    this._renderGhosts(room, isHost);
     document.body.classList.toggle('is-guest', !isHost);
     $('room-id').textContent = room.id;
     this.updateInvite(room.id);
@@ -409,15 +568,18 @@ export class UI {
       const km = Math.max(0, r.dist) * trackLen / 1000;
       const laps = Math.max(0, Math.floor(r.dist));
       const prog = Math.max(0, r.dist - laps);
+      const tags = (r.isBot ? ' <small>(CPU)</small>' : '')
+        + (r.isGhost ? '<span class="ghost-tag">GHOST</span>' : '')
+        + (r.record ? `<span class="rank-badge">🏆 ランキング${r.record.rank}位</span>` : '');
       tr.innerHTML = `
         <td class="pos">${i + 1}</td>
-        <td><span class="chip" style="background:${KART_COLORS[r.color % KART_COLORS.length]}"></span>${esc(r.name)}${r.isBot ? ' <small>(CPU)</small>' : ''}</td>
+        <td><span class="chip" style="background:${KART_COLORS[r.color % KART_COLORS.length]}${r.isGhost ? ';opacity:0.5' : ''}"></span>${esc(r.name)}${tags}</td>
         <td>${km.toFixed(2)} km</td>
         <td>${laps}周 +${Math.round(prog * 100)}%</td>
         <td>${fmtLap(r.bestLap)}</td>`;
       body.appendChild(tr);
     });
     const w = results[0];
-    $('winner').textContent = w ? `★ WINNER: ${w.name} ★` : '';
+    $('winner').textContent = w ? `★ WINNER: ${w.isGhost ? 'GHOST ' : ''}${w.name} ★` : '';
   }
 }

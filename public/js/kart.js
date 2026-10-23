@@ -180,7 +180,7 @@ export class Kart {
       x: +this.x.toFixed(2), y: +this.y.toFixed(2), z: +this.z.toFixed(2),
       h: +this.heading.toFixed(3), v: +this.vf.toFixed(2), st: +this.steer.toFixed(2),
       d: +this.totalDist.toFixed(5), lap: this.lap, tt: this.tyreType, tw: +this.tyre.toFixed(1),
-      b: this.boostT > 0 ? 1 : 0, p: this.pit.state === 'work' ? 1 : 0, bl: +this.bestLap.toFixed(3),
+      b: this.boostT > 0 ? 1 : 0, p: this.pit.state === 'work' ? 1 : 0, bl: +this.bestLap.toFixed(3), ll: +this.lastLap.toFixed(3),
     };
   }
 

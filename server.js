@@ -2,12 +2,14 @@
 // ============================================================
 //  Pixel Kart Endurance - game server
 //  Express (static files) + Socket.io (rooms / sync / race timer)
+//  + course rankings with ghost data (records.js)
 // ============================================================
 const path = require('path');
 const http = require('http');
 const express = require('express');
 const compression = require('compression');
 const { Server } = require('socket.io');
+const { RecordStore, Recorder, genId, GHOST_HZ } = require('./records');
 
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
@@ -36,6 +38,42 @@ const TYRES = ['S', 'M', 'H', 'W'];
 const SKILLS = ['meister', 'junkie', 'offroader', 'sliphunter', 'quickpit',
   'nitro', 'smoke', 'aerojump', 'overclock', 'highroller', 'jammer'];
 const BOT_SKILLS = ['meister', 'junkie', 'sliphunter', 'overclock', 'highroller'];
+const RANKED_DURATIONS = [300, 900];       // test races (1 min) are not ranked
+const MAX_GHOSTS = 4;
+
+// ------------------------------------------------------------
+//  Rankings & ghosts (HTTP, so that big ghosts are gzip-compressed)
+// ------------------------------------------------------------
+const records = new RecordStore(process.env.DATA_DIR || path.join(__dirname, 'data'));
+const restoreOpt = {
+  courseCount: COURSE_COUNT, durations: RANKED_DURATIONS, tyres: TYRES,
+  skills: SKILLS.concat(['none']), cleanName: n => cleanName(n),
+};
+
+app.get('/api/ranking', (req, res) => {
+  const course = Number(req.query.course), duration = Number(req.query.duration);
+  res.set('Cache-Control', 'no-store');
+  res.json({ course, duration, entries: records.list(course, duration) });
+});
+app.get('/api/records/ids', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ ids: records.ids() });
+});
+app.get('/api/ghost/:id', (req, res) => {
+  const json = records.ghost(String(req.params.id));
+  if (!json) return res.status(404).json({ error: 'not found' });
+  res.set('Cache-Control', 'public, max-age=86400');   // a ghost never changes
+  res.type('json').send(json);
+});
+// a browser uploads its own record again (after the server lost its disk)
+let restoreBudget = { t: 0, n: 0 };
+app.post('/api/records/restore', express.json({ limit: '3mb' }), (req, res) => {
+  const now = Date.now();
+  if (now - restoreBudget.t > 60000) restoreBudget = { t: now, n: 0 };
+  if (++restoreBudget.n > 120) return res.status(429).json({ ok: false, error: 'busy' });
+  const body = req.body || {};
+  res.json(records.restore(body.entry, body.ghost, restoreOpt));
+});
 
 /** @type {Map<string, any>} */
 const rooms = new Map();
@@ -79,6 +117,7 @@ function lobbyView(room) {
     night: room.night,
     weather: room.weather,
     noSkills: room.noSkills,
+    ghosts: room.ghosts,
     status: room.status,
     players: [...room.players.values()].map(p => ({
       id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, color: p.color, isBot: p.isBot,
@@ -144,7 +183,7 @@ function sanitizeState(s) {
     x: num(s.x), y: num(s.y), z: num(s.z), h: num(s.h), v: num(s.v), st: num(s.st),
     d: num(s.d, -1), lap: Math.trunc(num(s.lap)), tt: TYRES.includes(s.tt) ? s.tt : 'M',
     tw: Math.max(0, Math.min(100, num(s.tw, 100))), b: s.b ? 1 : 0, p: s.p ? 1 : 0,
-    bl: num(s.bl, 0),
+    bl: num(s.bl, 0), ll: num(s.ll, 0),
   };
 }
 
@@ -158,19 +197,61 @@ function startRace(room) {
   const order = [...room.players.values()].sort((a, b) => (a.isBot - b.isBot));
   const grid = order.map((p, i) => ({ id: p.id, slot: i }));
   for (const p of room.players.values()) p.state = null;
+  room.wx = room.weather ? genWeather(room.duration) : [];
+  // every human is recorded for the ranking / ghosts
+  room.rec = new Map(humans(room).map(p => [p.id, new Recorder()]));
+  room.ghosts = room.ghosts.filter(id => {
+    const e = records.find(id);
+    return e && e.course === room.course && e.duration === room.duration;
+  });
   io.to(room.id).emit('raceInit', {
     serverNow: now,
     startAt: room.startAt,
     endAt: room.endAt,
     duration: room.duration,
     grid,
-    weather: room.weather ? genWeather(room.duration) : [],
+    weather: room.wx,
+    ghosts: room.ghosts.map(id => records.find(id)),
     room: lobbyView(room),
   });
 }
 
+/** put every human who finished the race into the course ranking */
+function recordResults(room) {
+  const out = {};
+  if (!room.rec || !RANKED_DURATIONS.includes(room.duration)) return out;
+  const field = room.players.size;
+  for (const p of humans(room)) {
+    const rec = room.rec.get(p.id);
+    if (!rec || !p.state || rec.n < GHOST_HZ * 10 || p.state.d <= 0) continue;
+    const dist = p.state.d;
+    if (!records.wouldRank(room.course, room.duration, dist)) continue;
+    const entry = {
+      id: genId(), course: room.course, duration: room.duration,
+      name: p.name, color: p.color,
+      skill: room.noSkills ? 'none' : p.skill,
+      tyres: rec.tyres, laps: rec.laps,
+      lapCount: Math.max(0, Math.floor(dist)),
+      dist: Math.round(dist * 1e5) / 1e5,
+      bestLap: p.state.bl || (rec.laps.length ? Math.min(...rec.laps) : 0),
+      date: Date.now(), night: room.night,
+      weather: room.wx.map(w => w.type), noSkills: room.noSkills, field,
+    };
+    if (records.add(entry, rec.ghost())) out[p.id] = { rank: 0, id: entry.id };
+  }
+  // final ranks (several players of the same race may have pushed each other down)
+  const table = records.list(room.course, room.duration);
+  for (const [pid, r] of Object.entries(out)) {
+    r.rank = table.findIndex(e => e.id === r.id) + 1;
+    if (!r.rank) delete out[pid];
+  }
+  return out;
+}
+
 function endRace(room) {
   room.status = 'lobby';
+  const ranked = recordResults(room);
+  room.rec = null;
   const results = [...room.players.values()].map(p => ({
     id: p.id,
     name: p.name,
@@ -180,6 +261,7 @@ function endRace(room) {
     lap: p.state ? p.state.lap : 0,
     bestLap: p.state ? p.state.bl : 0,
     tyre: p.state ? p.state.tt : p.tyre,
+    record: ranked[p.id] || null,     // {rank, id} when it entered the course ranking
   })).sort((a, b) => b.dist - a.dist);
   io.to(room.id).emit('raceEnd', { results });
   for (const p of room.players.values()) p.state = null;
@@ -239,6 +321,7 @@ io.on('connection', (socket) => {
       night: false,
       weather: true,       // random rain / fog during the race
       noSkills: false,     // everyone races without skills
+      ghosts: [],          // ranking entries raced as ghosts
       status: 'lobby',
       players: new Map(),
       startAt: 0,
@@ -300,9 +383,24 @@ io.on('connection', (socket) => {
     const room = hostRoom();
     if (!room || room[key] === value) return;
     room[key] = value;
+    if (key === 'course' || key === 'duration') room.ghosts = [];   // ghosts belong to one course & length
     resetReady(room);
     broadcastLobby(room);
   };
+
+  // ghosts from the ranking of the current course & race length
+  socket.on('setGhosts', (ids) => {
+    const room = hostRoom();
+    if (!room || !Array.isArray(ids)) return;
+    const ok = [...new Set(ids.map(String))].filter(id => {
+      const e = records.find(id);
+      return e && e.course === room.course && e.duration === room.duration;
+    }).slice(0, MAX_GHOSTS);
+    if (ok.join() === room.ghosts.join()) return;
+    room.ghosts = ok;
+    resetReady(room);
+    broadcastLobby(room);
+  });
 
   socket.on('setDuration', (sec) => {
     const d = Number(sec);
@@ -356,7 +454,10 @@ io.on('connection', (socket) => {
     const p = room.players.get(socket.id);
     if (!p) return;
     const st = sanitizeState(s);
-    if (st) p.state = st;
+    if (!st) return;
+    p.state = st;
+    const rec = room.rec && room.status === 'racing' && room.rec.get(socket.id);
+    if (rec) rec.observe(st);
   });
 
   socket.on('botStates', (arr) => {
@@ -379,9 +480,10 @@ io.on('connection', (socket) => {
     if (!p || p.skill !== type || !['nitro', 'smoke', 'aerojump', 'jammer'].includes(type)) return;
     const out = { id: socket.id, type };
     if (type === 'jammer') {
-      const target = String(evt.target || '');
-      if (target === socket.id || !room.players.has(target)) return;
-      out.target = target;
+      // every rival ahead in the race order (chosen by the sender)
+      const targets = Array.isArray(evt.targets) ? [...new Set(evt.targets.map(String))] : [];
+      out.targets = targets.filter(t => t !== socket.id && room.players.has(t)).slice(0, MAX_PLAYERS);
+      if (!out.targets.length) return;
     }
     socket.to(room.id).emit('skill', out);
   });
@@ -400,6 +502,14 @@ setInterval(() => {
     if (room.status === 'racing' && now >= room.endAt) {
       endRace(room);
       continue;
+    }
+    if (room.status === 'racing' && room.rec) {
+      const idx = Math.floor(((now - room.startAt) / 1000) * GHOST_HZ);
+      for (const [id, rec] of room.rec) {
+        const p = room.players.get(id);
+        if (!p || !p.state) continue;
+        while (rec.n <= idx) rec.sample(p.state);
+      }
     }
     const players = [];
     for (const p of room.players.values()) {

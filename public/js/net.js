@@ -58,10 +58,11 @@ export class Net {
   setWeather(on) { this.socket.emit('setWeather', !!on); }
   setNoSkills(on) { this.socket.emit('setNoSkills', !!on); }
   setReady(on) { this.socket.emit('setReady', !!on); }
+  setGhosts(ids) { this.socket.emit('setGhosts', ids); }
   addBot() { this.socket.emit('addBot'); }
   removeBot() { this.socket.emit('removeBot'); }
   startRace() { return this._ask('startRace', {}); }
   sendState(s) { this.socket.volatile.emit('state', s); }
   sendBotStates(arr) { this.socket.volatile.emit('botStates', arr); }
-  sendSkill(type, target) { this.socket.emit('skill', target ? { type, target } : { type }); }
+  sendSkill(type, targets) { this.socket.emit('skill', targets ? { type, targets } : { type }); }
 }

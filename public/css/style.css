@@ -267,6 +267,35 @@ body.no-share .share-only { display: none !important; }
 
 /* ---------------- settings modal ---------------- */
 #settings-modal { z-index: 40; background: rgba(0, 0, 0, 0.55); }
+#ranking-modal { z-index: 38; background: rgba(0, 0, 0, 0.55); }
+.ranking-panel { width: min(860px, 100%); }
+.ranking-tools { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 10px 0 4px; }
+.ranking-tools select { font: inherit; font-size: 14px; padding: 6px 8px; background: #0b0f24; color: #fff; border: 3px solid #fff; min-width: 220px; }
+.ranking-tools .seg { flex: 1; min-width: 200px; }
+table.ranking { font-size: 13px; text-align: left; }
+table.ranking td, table.ranking th { white-space: nowrap; }
+table.ranking tr.entry { cursor: pointer; }
+table.ranking tr.entry:hover td { background: rgba(255, 255, 255, 0.06); }
+table.ranking tr.mine td { background: rgba(255, 210, 59, 0.14); }
+table.ranking td.pos { font-size: 16px; }
+table.ranking tr.detail td { white-space: normal; color: var(--dim); font-size: 12px; background: rgba(0, 0, 0, 0.25); }
+table.ranking .laps { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 4px; color: #fff; }
+table.ranking .laps .best { color: var(--green); font-weight: bold; }
+.tyre-seq { display: inline-flex; align-items: center; gap: 2px; }
+.tyre-seq i { display: inline-flex; width: 16px; height: 16px; border-radius: 50%; border: 3px solid #222; font-size: 8px; font-style: normal; font-weight: bold; color: #111; align-items: center; justify-content: center; }
+.tyre-seq b { color: var(--dim); font-size: 10px; }
+.ranking-empty { text-align: center; color: var(--dim); padding: 18px 0; }
+.rank-badge { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 11px; color: #111; background: var(--accent); font-weight: bold; }
+.ghost-tag { display: inline-block; margin-left: 6px; padding: 0 4px; font-size: 10px; color: #cfd6ee; border: 2px solid #cfd6ee; }
+.ghost-list { display: grid; gap: 4px; }
+.ghost-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: rgba(255,255,255,0.06); border-left: 6px solid #888; font-size: 13px; cursor: pointer; }
+.ghost-row input { width: 18px; height: 18px; accent-color: var(--accent); }
+.ghost-row .g-rank { width: 2.2em; font-weight: bold; color: var(--accent); }
+.ghost-row .g-name { flex: 1; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ghost-row .g-dist { color: var(--dim); white-space: nowrap; }
+.ghost-row.on { background: rgba(207, 214, 238, 0.18); }
+.ghost-list.locked .ghost-row { cursor: default; }
+.ghost-empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
 .settings-panel { width: min(720px, 100%); }
 .settings-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .settings-head h2 { margin: 0; border: none; font-size: 20px; }
@@ -314,8 +343,8 @@ table.keymap td:first-child { font-weight: bold; }
 .key-slot.flash { border-color: var(--green); }
 
 .title-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-.title-tools .btn-settings { flex: 1; }
-.head-tools { display: flex; gap: 8px; }
+.title-tools .btn-settings, .title-tools .btn-ranking { flex: 1; }
+.head-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .fs-btn { margin-top: 0; }
 
 /* ---------------- screens & panels ---------------- */

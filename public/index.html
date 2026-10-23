@@ -67,6 +67,7 @@
       <div id="title-error" class="error"></div>
 
       <div class="title-tools">
+        <button class="btn btn-ranking" type="button">🏆 ランキング</button>
         <button class="btn btn-settings" type="button">⚙ 設定（操作・ボタン配置・音）</button>
         <button class="btn fs-btn touch-only fs-only" type="button">⛶ 全画面</button>
       </div>
@@ -94,6 +95,7 @@
           <button id="btn-copy" class="btn small" type="button">コピー</button>
         </div>
         <div class="head-tools">
+          <button class="btn small btn-ranking" type="button">🏆 ランキング</button>
           <button class="btn small btn-settings" type="button">⚙ 設定</button>
           <button id="btn-leave" class="btn small danger" type="button">退出</button>
         </div>
@@ -137,6 +139,9 @@
             </div>
           </div>
           <p id="rule-note" class="note"></p>
+          <h2>👻 ゴースト対戦 <small id="ghost-note"></small></h2>
+          <p class="note">このコース・レース時間のランキング上位の走りがゴースト（半透明・ぶつからない）になって一緒に走ります。最大4台。</p>
+          <div id="ghost-list" class="ghost-list"></div>
           <h2>初期タイヤ</h2>
           <div id="tyre-select" class="tyre-cards"></div>
           <h2>個性（スキル）</h2>
@@ -204,7 +209,7 @@
           <thead><tr><th>操作</th><th>キー 1</th><th>キー 2</th></tr></thead>
           <tbody id="keymap-body"></tbody>
         </table>
-        <p class="note">ピットでのタイヤ選択は数字キー <b>1</b> / <b>2</b> / <b>3</b>（固定）です。</p>
+        <p class="note">ピットでのタイヤ選択は数字キー <b>1</b>〜<b>4</b>（固定）です。</p>
         <button id="btn-keys-reset" class="btn small" type="button">キー設定を初期状態に戻す</button>
       </div>
 
@@ -234,6 +239,27 @@
 
       <div class="tab-body" data-tab="sound">
         <div class="audio-mount"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= RANKING ================= -->
+  <div id="ranking-modal" class="overlay hidden" role="dialog" aria-label="ランキング">
+    <div class="panel ranking-panel">
+      <div class="settings-head">
+        <h2>🏆 コースランキング（TOP 10）</h2>
+        <button id="btn-ranking-close" class="btn small" type="button">閉じる ✕</button>
+      </div>
+      <div class="ranking-tools">
+        <select id="ranking-course"></select>
+        <div id="ranking-duration" class="seg"></div>
+      </div>
+      <p class="note">5分・15分のレースを最後まで走りきると記録されます（友達・CPUとのレースも対象）。行を押すと周回ごとのラップタイムを表示します。</p>
+      <div class="table-wrap">
+        <table class="results ranking">
+          <thead><tr><th>順位</th><th>プレイヤー</th><th>走行距離</th><th>ベスト</th><th>個性</th><th>タイヤ</th><th>日付</th></tr></thead>
+          <tbody id="ranking-body"></tbody>
+        </table>
       </div>
     </div>
   </div>

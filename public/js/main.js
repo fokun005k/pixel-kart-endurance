@@ -15,7 +15,8 @@ import { BotDriver } from './bot.js';
 import { Hud, fmtLap } from './hud.js';
 import { sound } from './audio.js';
 import { Net } from './net.js';
-import { UI } from './ui.js';
+import { UI, addMyRecordId } from './ui.js';
+import { GhostPlayer, fetchGhostRaw, backupMine, syncMine } from './records.js';
 import { SmokeSystem, SpraySystem } from './effects.js';
 import { Weather } from './weather.js';
 import { mulberry32 } from './textures.js';
@@ -154,6 +155,7 @@ const G = {
   race: null,
   me: null,
   remotes: new Map(),  // id -> remote kart (interpolated from snapshots)
+  ghosts: new Map(),   // ranking entry id -> ghost kart (replayed recording)
   bots: new Map(),     // id -> host-simulated CPU kart
   demo: [],            // attract-mode karts behind the menus
   attractDist: 0,
@@ -213,6 +215,7 @@ const ui = new UI({
   onNight(on) { net.setNight(on); },
   onWeather(on) { net.setWeather(on); },
   onNoSkills(on) { net.setNoSkills(on); },
+  onGhosts(ids) { net.setGhosts(ids); },
   onReady(on) {
     if (on) net.updatePlayer(G.sel);   // make sure the server has the final choice
     net.setReady(on);
@@ -307,18 +310,20 @@ net.on('snapshot', (snap) => {
     r.recvAt = now;
   }
 });
-net.on('skill', ({ id, type, target }) => {
+net.on('skill', ({ id, type, targets }) => {
   if (G.phase !== 'race' || !G.race) return;
   const r = G.remotes.get(id);
   if (type === 'jammer') {
     const by = r ? r.info.name : '???';
-    if (target === G.myId && G.me) {
-      G.race.jamBy = by;
-      G.me.jam(PHYS.JAMMER.dur);
-    } else if (G.bots.has(target)) {
-      G.bots.get(target).kart.jam(PHYS.JAMMER.dur);   // host-simulated CPU
-    } else if (G.remotes.has(target)) {
-      G.remotes.get(target).smokeT = 0;                 // its smoke screen is cut
+    for (const target of targets || []) {
+      if (target === G.myId && G.me) {
+        G.race.jamBy = by;
+        G.me.jam(PHYS.JAMMER.dur);
+      } else if (G.bots.has(target)) {
+        G.bots.get(target).kart.jam(PHYS.JAMMER.dur);   // host-simulated CPU
+      } else if (G.remotes.has(target)) {
+        G.remotes.get(target).smokeT = 0;                 // its smoke screen is cut
+      }
     }
     return;
   }
@@ -496,8 +501,10 @@ function updateAttract(dt) {
 function clearRace() {
   for (const r of G.remotes.values()) scene.remove(r.model.group);
   for (const b of G.bots.values()) scene.remove(b.model.group);
+  for (const g of G.ghosts.values()) scene.remove(g.model.group);
   G.remotes.clear();
   G.bots.clear();
+  G.ghosts.clear();
   G.me = null;
   G.race = null;
   smoke.clear();
@@ -534,7 +541,7 @@ function startRace(data) {
     lastCount: null, goPlayed: false, spurtOn: false, ocOn: false, lowWarned: false,
     lastBump: 0, wrenchT: 0, wrongWayT: 0, skillWasReady: true,
     weather: new Weather(data.weather), wxAnnounced: new Set(), wxState: 'sun', tyreHint: '',
-    jamBy: '', jamTarget: null,
+    jamBy: '', jamTargets: 0,
   };
   // "no skills" rule: everybody races with skill 'none'
   const skillOf = id => (G.room.noSkills ? 'none' : id);
@@ -572,6 +579,18 @@ function startRace(data) {
     });
   }
 
+  // ghosts from the ranking: translucent, no collisions, replayed from their recording
+  for (const entry of data.ghosts || []) {
+    if (!entry) continue;
+    const model = makeGhostModel(entry);
+    model.group.visible = false;
+    const gk = { entry, model, player: null, state: null };
+    G.ghosts.set(entry.id, gk);
+    fetchGhostRaw(entry.id).then((raw) => {
+      if (raw && G.ghosts.get(entry.id) === gk) gk.player = new GhostPlayer(entry, raw);
+    });
+  }
+
   G.phase = 'race';
   ui.show('race');
   document.body.classList.add('racing');
@@ -590,8 +609,24 @@ function finishRace(data) {
   sound.setFast(false);
   sound.sfx('finish');
   hud.message('FINISH!', '#ffd23b', 2.6, 9);
-  const results = data.results;
+  const results = data.results.slice();
+  for (const g of G.ghosts.values()) {
+    const e = g.entry;
+    results.push({ id: e.id, name: e.name, color: e.color, isGhost: true, dist: e.dist, lap: e.lapCount, bestLap: e.bestLap });
+  }
+  results.sort((a, b) => b.dist - a.dist);
   const trackLen = track.length;
+  ui.invalidateRanking();
+  const mine = data.results.find(r => r.id === G.myId);
+  if (mine && mine.record) {
+    const course = G.room.course, duration = G.race.duration;
+    addMyRecordId(mine.record.id);
+    backupMine(course, duration, mine.record.id);
+    setTimeout(() => {
+      sound.sfx('best');
+      ui.toast(`🏆 ${COURSES[course].name}（${duration / 60}分）ランキング ${mine.record.rank}位に入りました！`, 4500);
+    }, 3000);
+  }
   setTimeout(() => {
     if (G.phase !== 'race') return;
     clearRace();
@@ -615,17 +650,13 @@ function spurtMulFor(kart, remaining, active) {
   return remaining <= PHYS.SPURT_TIME ? PHYS.SPURT_MUL : 1;
 }
 
-/** Skill Jammer target: the closest rival ahead in the race order, within range */
-function jamTarget() {
-  const me = G.me, L = track.length;
-  let best = null;
-  const consider = (id, name, dist) => {
-    const gap = (dist - me.totalDist) * L;
-    if (gap > 0 && gap <= PHYS.JAMMER.range && (!best || gap < best.gap)) best = { id, name, gap };
-  };
-  for (const [id, r] of G.remotes) consider(id, r.info.name, r.target.d);
-  for (const [id, b] of G.bots) consider(id, b.info.name, b.kart.totalDist);
-  return best;
+/** Skill Jammer targets: every rival ahead of me in the race order (any distance) */
+function jamTargets() {
+  const me = G.me;
+  const out = [];
+  for (const [id, r] of G.remotes) if (r.target.d > me.totalDist) out.push(id);
+  for (const [id, b] of G.bots) if (b.kart.totalDist > me.totalDist) out.push(id);
+  return out;
 }
 
 /** weather for this frame: sky, forecasts and pit hints */
@@ -713,15 +744,15 @@ function updateRace(dt, time) {
 
   // ---- input & skills
   const inp = readInput();
-  const target = me.skill === 'jammer' ? jamTarget() : null;
+  const targets = me.skill === 'jammer' ? jamTargets() : [];
   if (skillQueued) {
     skillQueued = false;
-    const fired = me.activateSkill(active, target);
+    const fired = me.activateSkill(active, targets.length ? targets : null);
     if (fired === 'jammer') {
       sound.sfx('jammer');
-      net.sendSkill('jammer', target.id);
-      if (G.bots.has(target.id)) G.bots.get(target.id).kart.jam(PHYS.JAMMER.dur);
-      hud.message(`JAMMED ${target.name.toUpperCase()}!`, '#ff70ff', 1.6, 3);
+      net.sendSkill('jammer', targets);
+      for (const id of targets) if (G.bots.has(id)) G.bots.get(id).kart.jam(PHYS.JAMMER.dur);
+      hud.message(`JAMMED ${targets.length} RIVAL${targets.length > 1 ? 'S' : ''}!`, '#ff70ff', 1.6, 3);
     } else if (fired) {
       sound.sfx(fired);
       net.sendSkill(fired);
@@ -729,7 +760,7 @@ function updateRace(dt, time) {
     } else if (SKILL_BY_ID[me.skill].type === 'active' && active) {
       sound.sfx('error');
       if (me.jamT > 0) hud.message('SKILL JAMMED!', '#ff70ff', 1, 3);
-      else if (me.skill === 'jammer' && me.skillCd <= 0 && !target) hud.message('NO TARGET', '#ffffff', 1, 3);
+      else if (me.skill === 'jammer' && me.skillCd <= 0 && !targets.length) hud.message('NO ONE AHEAD', '#ffffff', 1, 3);
     }
   }
   const ready = me.skillCd <= 0 && me.jamT <= 0;
@@ -739,7 +770,7 @@ function updateRace(dt, time) {
     else ui.updateSkillButton(SKILL_SHORT[me.skill] || 'SKILL', me.skillCd, bindings.describe('skill', true));
   }
   race.skillWasReady = ready;
-  race.jamTarget = target;
+  race.jamTargets = targets.length;
   ui.setRotateHint(touch.enabled && window.innerHeight > window.innerWidth);
 
   // ---- collect other karts for collisions / slipstream
@@ -816,6 +847,7 @@ function updateRace(dt, time) {
 
   // ---- remote karts (interpolation) & bots
   updateRemotes(dt);
+  updateGhosts(tRace, dt);
   for (const [id, b] of G.bots) {
     const k = b.kart;
     placeModel(b.model, k.x, k.y, k.z, k.heading, k.steer, k.vf, dt, k.boostT > 0, k.tyreType);
@@ -939,6 +971,36 @@ function updateRemotes(dt) {
   }
 }
 
+/** move the ghost karts along their recordings */
+function updateGhosts(tRace, dt) {
+  for (const g of G.ghosts.values()) {
+    if (!g.player) continue;
+    const st = g.player.at(tRace);
+    g.state = st;
+    g.model.group.visible = true;
+    placeModel(g.model, st.x, st.y, st.z, st.h, st.st, st.v, dt, st.b, st.tt);
+  }
+}
+
+function makeGhostModel(entry) {
+  const color = KART_COLORS[entry.color % KART_COLORS.length];
+  const model = createKartModel(color, entry.color + 1, false);
+  model.group.traverse((o) => {
+    if (!o.material) return;
+    o.material.transparent = true;
+    o.material.opacity = 0.38;
+    o.material.depthWrite = false;
+  });
+  model.shadow.visible = false;
+  const tag = createNameTag(`GHOST ${entry.name}`, color);
+  tag.material.opacity = 0.7;
+  model.group.add(tag);
+  model.setTyre(entry.tyres[0] || 'M');
+  model.tyre = entry.tyres[0] || 'M';
+  scene.add(model.group);
+  return model;
+}
+
 function updateCamera(dt) {
   const k = G.me;
   const speed = Math.abs(k.vf);
@@ -988,6 +1050,10 @@ function buildHudState(remaining, cd, time) {
   for (const b of G.bots.values()) {
     entries.push({ name: b.info.name, color: KART_COLORS[b.info.color % 8], dist: b.kart.totalDist, lap: b.kart.lap, pit: b.kart.pit.state === 'work', x: b.kart.x, z: b.kart.z });
   }
+  for (const g of G.ghosts.values()) {
+    if (!g.state) continue;
+    entries.push({ name: g.entry.name, color: KART_COLORS[g.entry.color % 8], dist: g.state.d, lap: Math.floor(g.state.d), pit: g.state.p, x: g.state.x, z: g.state.z, ghost: true });
+  }
   entries.sort((a, b) => b.dist - a.dist);
   const leader = entries[0].dist;
   for (const e of entries) e.gapM = (leader - e.dist) * L;
@@ -997,7 +1063,7 @@ function buildHudState(remaining, cd, time) {
   let rearWarn = 0;
   const fx = -Math.sin(me.heading), fz = -Math.cos(me.heading);
   for (const e of entries) {
-    if (e.isMe) continue;
+    if (e.isMe || e.ghost) continue;
     const dx = e.x - me.x, dz = e.z - me.z;
     const along = dx * fx + dz * fz;
     const lat = Math.abs(dx * -fz + dz * fx);
@@ -1051,7 +1117,7 @@ function buildHudState(remaining, cd, time) {
     limiter: me.limiter,
     tyreType: me.tyreType,
     tyre: me.tyre,
-    skill: { def, cd: me.skillCd, cdTotal: def.cd || 0, jam: me.jamT, target: G.race.jamTarget ? G.race.jamTarget.name : null },
+    skill: { def, cd: me.skillCd, cdTotal: def.cd || 0, jam: me.jamT, target: G.race.jamTargets ? `前方の${G.race.jamTargets}人` : null },
     standings: entries,
     karts: entries,
     slip: me.slip,
@@ -1094,6 +1160,7 @@ function frame(now) {
 }
 
 ui.setCourses(COURSES, TRACKS);
+syncMine().then((n) => { if (n) ui.invalidateRanking(); });
 loadEnvironment(0, false);
 startDemo();
 ui.show('title');

@@ -237,9 +237,11 @@ export class Hud {
       }
       drawText(g, String(i + 1), x + 10, ry + 4, 1, '#ffffff');
       g.fillStyle = r.color;
+      if (r.ghost) g.globalAlpha = 0.45;
       g.fillRect(x + 20, ry + 2, 6, 12);
-      g.fillStyle = r.isMe ? '#ffe060' : '#ffffff';
-      g.fillText(r.name.slice(0, 8), x + 32, ry + 9);
+      g.globalAlpha = 1;
+      g.fillStyle = r.isMe ? '#ffe060' : r.ghost ? '#aab2cc' : '#ffffff';
+      g.fillText(r.ghost ? `G ${r.name.slice(0, 6)}` : r.name.slice(0, 8), x + 32, ry + 9);
       const gap = i === 0 ? `L${Math.max(1, r.lap + 1)}` : `-${Math.round(r.gapM)}M`;
       drawText(g, r.pit ? 'PIT' : gap, x + w - 10, ry + 4, 1, r.pit ? '#f0c020' : '#a0a0b8', 'right');
     });
@@ -252,11 +254,13 @@ export class Hud {
     const { ox, oz, sc } = this.mm;
     for (const k of st.karts) {
       const px = Math.round(x + ox + k.x * sc), py = Math.round(y + oz + k.z * sc);
+      g.globalAlpha = k.ghost ? 0.5 : 1;
       g.fillStyle = '#000';
       g.fillRect(px - 3, py - 3, k.isMe ? 7 : 6, k.isMe ? 7 : 6);
       g.fillStyle = k.color;
       g.fillRect(px - 2, py - 2, k.isMe ? 5 : 4, k.isMe ? 5 : 4);
     }
+    g.globalAlpha = 1;
   }
 
   /** rev-counter LEDs: green -> yellow -> red; flashes cyan as a shift light */
@@ -380,7 +384,7 @@ export class Hud {
       g.font = `bold 12px ${JP_FONT}`;
       g.textAlign = 'right';
       g.fillStyle = sk.target ? '#ff90ff' : '#8088a0';
-      g.fillText(sk.target ? `→ ${sk.target}` : '前方300m以内に相手なし', x + w - 12, y + 24);
+      g.fillText(sk.target ? `→ ${sk.target}` : '前に誰もいない', x + w - 12, y + 24);
       g.textAlign = 'left';
     }
     if (sk.def.type === 'passive') {

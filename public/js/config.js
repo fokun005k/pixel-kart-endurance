@@ -79,8 +79,8 @@ export const PHYS = {
   OVERCLOCK_FRACTION: 0.25, OVERCLOCK_MIN: 120, OVERCLOCK_MUL: 1.25,
   HIGHROLLER_MUL: 1.12, HIGHROLLER_WEAR: 1.25,
   MEISTER_WEAR: 0.75,
-  // Skill Jammer: silences the nearest rival ahead
-  JAMMER: { range: 300, dur: 10 },
+  // Skill Jammer: silences every rival ahead in the race order (any distance)
+  JAMMER: { dur: 10 },
 
   // ---- weather (wet = how wet the track is, 0..1)
   WET_SLICK_GRIP: 0.42,   // slicks lose up to 42% grip on a soaked track
@@ -118,7 +118,7 @@ export const SKILLS = [
   { id: 'aerojump', name: 'エアロジャンプ', en: 'AERO JUMP', type: 'active', cd: 10, desc: '加速しながら高くジャンプし、前方のカートやダートを飛び越える。着地時にミニダッシュ。' },
   { id: 'overclock', name: 'オーバークロック', en: 'OVERCLOCK', type: 'passive', desc: 'レース終盤（残り25%・最低2分）から自分だけ1.25倍加速。その間タイヤが減らない。' },
   { id: 'highroller', name: 'ハイローラー', en: 'HIGH ROLLER', type: 'passive', desc: '常時、最高速度と加速が12%高い。ただしタイヤの摩耗速度が1.25倍になる。' },
-  { id: 'jammer', name: 'スキルジャマー', en: 'SKILL JAMMER', type: 'active', cd: 25, desc: '前方にいる一番近いライバル（300m以内）の個性を10秒間無効化する。パッシブもアクティブも止まる。' },
+  { id: 'jammer', name: 'スキルジャマー', en: 'SKILL JAMMER', type: 'active', cd: 25, desc: '自分より前の順位にいる全員の個性を、距離に関係なく10秒間無効化する。後ろのプレイヤーには効かない。パッシブもアクティブも止まる。' },
 ];
 // used for everyone in "no skills" mode, and while a skill is jammed (never shown in the lobby list)
 export const SKILL_NONE = { id: 'none', name: '個性なし', en: 'NO SKILL', type: 'none', desc: '' };
