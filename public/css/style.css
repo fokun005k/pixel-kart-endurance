@@ -318,6 +318,17 @@ table.ranking .laps .best { color: var(--green); font-weight: bold; }
 .ghost-row .g-dist { color: var(--dim); white-space: nowrap; }
 .ghost-row.on { background: rgba(207, 214, 238, 0.18); }
 .ghost-row.no-ghost { opacity: 0.45; cursor: default; }
+.course-kind { margin-bottom: 8px; flex-wrap: wrap; }
+.course-kind .btn { flex: 1 1 110px; min-width: 0; white-space: normal; }
+.course-card.other-kind { display: none; }
+.car-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.car-grid.locked { pointer-events: none; opacity: 0.55; }
+.car-card { position: relative; padding: 6px 8px 8px; border: 3px solid #555; background: rgba(255,255,255,0.05); cursor: pointer; text-align: center; }
+.car-card:hover { border-color: #aaa; }
+.car-card.sel { border-color: var(--accent); background: rgba(255, 210, 59, 0.12); }
+.car-card canvas { width: 100%; image-rendering: pixelated; display: block; }
+.car-card .c-name { font-weight: bold; font-size: 13px; margin-top: 2px; }
+.car-card .c-desc { font-size: 11px; color: var(--dim); }
 .ghost-list.locked .ghost-row { cursor: default; }
 .ghost-empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
 .settings-panel { width: min(720px, 100%); }
@@ -500,7 +511,7 @@ input:focus { border-color: var(--accent); }
   font-size: 14px;
 }
 
-.lobby-grid { display: grid; grid-template-columns: 330px 1fr; gap: 24px; }
+.lobby-grid { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 24px; }
 @media (max-width: 860px) { .lobby-grid { grid-template-columns: 1fr; } }
 
 .player-list { list-style: none; margin: 0; padding: 0; }
@@ -523,7 +534,7 @@ input:focus { border-color: var(--accent); }
 .seg { display: flex; gap: 8px; }
 .seg .btn { flex: 1; }
 
-.tyre-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.tyre-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .tyre-cards.locked, .skill-grid.locked { pointer-events: none; opacity: 0.55; }
 .skill-grid.off { pointer-events: none; opacity: 0.3; filter: grayscale(1); }
 .tyre-card {
@@ -538,9 +549,9 @@ input:focus { border-color: var(--accent); }
 .tyre-card .t-head { display: flex; align-items: center; gap: 8px; font-weight: bold; font-size: 15px; }
 .tyre-card .badge { width: 28px; height: 28px; border-radius: 50%; border: 5px solid #1a1a1a; box-shadow: 0 0 0 2px #444; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #111; }
 .tyre-card .stat { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); margin-top: 5px; }
-.tyre-card .stat .k { width: 58px; white-space: nowrap; }
+.tyre-card .stat .k { width: 46px; white-space: nowrap; }
 .tyre-card .pips { display: flex; gap: 2px; }
-.tyre-card .pips i { width: 9px; height: 9px; background: rgba(255,255,255,0.12); }
+.tyre-card .pips i { width: 8px; height: 9px; background: rgba(255,255,255,0.12); }
 .tyre-card .pips i.on { background: var(--green); }
 .tyre-card .life { font-size: 11px; margin-top: 6px; color: #fff; }
 .tyre-card .key { position: absolute; top: 4px; right: 6px; font-size: 11px; color: var(--dim); }

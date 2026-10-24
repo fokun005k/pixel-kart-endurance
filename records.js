@@ -123,6 +123,7 @@ function cleanEntry(e, opt) {
     noSkills: !!e.noSkills,
     field: Math.max(1, Math.min(8, Math.trunc(num(e.field, 1)))),
     hasGhost: e.hasGhost !== false,   // records made before this flag existed always had one
+    car: opt.cars && opt.cars.includes(e.car) ? e.car : 'yaris',
   };
 }
 

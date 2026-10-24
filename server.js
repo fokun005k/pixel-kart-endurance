@@ -39,7 +39,7 @@ app.get('/api/info', (_req, res) => {
 
 const MAX_ROOMS = 200;
 const MAX_PLAYERS = 8;
-const COURSE_COUNT = 7;                    // must match public/js/courses.js
+const COURSE_COUNT = 17;                   // must match public/js/courses.js (7 circuits, 7 rally, 3 city)
 const DURATIONS = [60, 300, 900];          // 60 = dev only (?dev=1)
 const COUNTDOWN_MS = 5000;                 // READY(2s) + 3,2,1
 const TICK_MS = 50;                        // 20Hz snapshots
@@ -47,6 +47,7 @@ const TYRES = ['S', 'M', 'H', 'W'];
 const SKILLS = ['meister', 'junkie', 'offroader', 'sliphunter', 'quickpit',
   'nitro', 'smoke', 'aerojump', 'overclock', 'highroller', 'jammer'];
 const BOT_SKILLS = ['meister', 'junkie', 'sliphunter', 'overclock', 'highroller'];
+const CARS = ['yaris', 'eg6', 'impreza', 'evo', 'delta', 'p205'];   // rally car looks (public/js/config.js)
 const RANKED_DURATIONS = [300, 900];       // test races (1 min) are not ranked
 const MAX_GHOSTS = 4;
 
@@ -61,7 +62,7 @@ const records = new RecordStore({
 // pick up records made on other servers, retry writes that failed
 setInterval(() => { records.flush().then(() => records.fresh(55000)); }, 60000);
 const restoreOpt = {
-  courseCount: COURSE_COUNT, durations: RANKED_DURATIONS, tyres: TYRES,
+  courseCount: COURSE_COUNT, durations: RANKED_DURATIONS, tyres: TYRES, cars: CARS,
   skills: SKILLS.concat(['none']), cleanName: n => cleanName(n),
 };
 
@@ -137,7 +138,7 @@ function lobbyView(room) {
     ghosts: room.ghosts,
     status: room.status,
     players: [...room.players.values()].map(p => ({
-      id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, color: p.color, isBot: p.isBot,
+      id: p.id, name: p.name, tyre: p.tyre, skill: p.skill, car: p.car, color: p.color, isBot: p.isBot,
       ready: p.isBot || p.ready,
     })),
   };
@@ -162,6 +163,7 @@ function makePlayer(id, name, room, isBot = false) {
     id, name, isBot,
     tyre: isBot ? 'M' : 'M',
     skill: isBot ? BOT_SKILLS[Math.floor(Math.random() * BOT_SKILLS.length)] : 'meister',
+    car: isBot ? CARS[Math.floor(Math.random() * CARS.length)] : 'yaris',
     color: freeColor(room),
     ready: false,
     state: null,
@@ -252,7 +254,7 @@ function recordResults(room) {
       id: genId(), course: room.course, duration: room.duration,
       name: p.name, color: p.color,
       skill: room.noSkills ? 'none' : p.skill,
-      tyres: rec.tyres, laps: rec.laps,
+      tyres: rec.tyres, laps: rec.laps, car: p.car,
       lapCount: Math.max(0, Math.floor(dist)),
       dist: Math.round(dist * 1e5) / 1e5,
       bestLap: p.state.bl || (rec.laps.length ? Math.min(...rec.laps) : 0),
@@ -385,6 +387,7 @@ io.on('connection', (socket) => {
     if (!p || p.ready) return;          // choices are locked while READY
     if (TYRES.includes(data.tyre)) p.tyre = data.tyre;
     if (SKILLS.includes(data.skill)) p.skill = data.skill;
+    if (CARS.includes(data.car)) p.car = data.car;
     broadcastLobby(room);
   });
 

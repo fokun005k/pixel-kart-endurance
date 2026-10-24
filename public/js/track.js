@@ -1,6 +1,7 @@
 // ============================================================
 //  Track model: centreline samples, track coordinates (dist/u/d),
-//  drivable region field, surfaces, pit lane, dirt shortcut, dash panels
+//  drivable region field, surfaces, pit lane, shortcuts, dash panels,
+//  water splashes (rally). Course kinds: circuit / rally / city.
 // ============================================================
 import * as THREE from 'three';
 import { ROAD_HALF, CURB_W, BARRIER, PIT, DIRT_HALF } from './config.js';
@@ -12,6 +13,10 @@ const REACH = 36;
 export class Track {
   constructor(course = COURSES[0]) {
     this.course = course;
+    this.kind = course.kind || 'circuit';
+    this.barrier = course.barrier || BARRIER;     // city streets have their walls closer
+    this.roadGrip = course.roadGrip || 1;         // gravel / snow stages are slipperier
+    this.carMode = this.kind === 'rally';         // rally: cars instead of karts
     const curve = new THREE.CatmullRomCurve3(
       course.points.map(([x, z]) => new THREE.Vector3(x, 0, z)), true, 'centripetal');
     curve.arcLengthDivisions = 6000;
@@ -55,9 +60,9 @@ export class Track {
       for (let k = -3; k <= 3; k++) s += raw[(i + k + N) % N];
       curv[i] = s / 7;
     }
-    // curbs at corners
+    // curbs at corners (circuits only)
     this.curb = new Uint8Array(N);
-    for (let i = 0; i < N; i++) {
+    for (let i = 0; i < N && this.kind === 'circuit'; i++) {
       if (Math.abs(curv[i]) > 1 / 75) {
         for (let k = -6; k <= 6; k++) this.curb[(i + k + N) % N] = 1;
       }
@@ -73,17 +78,32 @@ export class Track {
 
     this._buildHash();
 
-    // ----- dirt shortcut segment
-    const dirt = course.dirt;
-    const qa = this.project(dirt.from.x, dirt.from.z);
-    const qb = this.project(dirt.to.x, dirt.to.z);
-    const A = this.pointAt(qa.dist, dirt.from.d);
-    const B = this.pointAt(qb.dist, dirt.to.d);
-    this.dirtA = { x: A.x, z: A.z };
-    this.dirtB = { x: B.x, z: B.z };
-    this.dirtDistA = qa.dist;
-    this.dirtDistB = qb.dist;
-    this.hairpinSide = dirt.from.d < 0 ? -1 : 1; // inside of the hairpin
+    // ----- shortcuts: straight corridors across the inside of corners.
+    // circuits: one dirt track across a hairpin (course.dirt = {from, to});
+    // rally: rocky corner cuts (course.cuts = [{at:[x,z], span}]) that only pay off with an Aero Jump
+    this.cuts = [];
+    if (course.dirt) {
+      const dirt = course.dirt;
+      const qa = this.project(dirt.from.x, dirt.from.z);
+      const qb = this.project(dirt.to.x, dirt.to.z);
+      this._addCut(qa.dist, dirt.from.d, qb.dist, dirt.to.d, DIRT_HALF, 'dirt');
+    }
+    for (const c of course.cuts || []) {
+      const q = this.project(c.at[0], c.at[1]);
+      const side = Math.sign(this.curv[q.i]) || 1;   // inside of the corner
+      const span = c.span || 30;
+      this._addCut(q.dist - span, side * 5.5, q.dist + span, side * 5.5, c.half || 5.5, 'rocks');
+    }
+    // legacy fields (signs / minimap) refer to the first shortcut
+    const c0 = this.cuts[0];
+    if (c0) {
+      this.dirtA = c0.A; this.dirtB = c0.B;
+      this.dirtDistA = c0.distA; this.dirtDistB = c0.distB;
+      this.hairpinSide = c0.side;
+    }
+
+    // ----- water splashes across the road (rally)
+    this.splash = (course.splash || []).map(([x, z]) => ({ dist: this.project(x, z).dist, len: 12 }));
 
     // ----- dash panels
     this.dash = course.dash.map(p => {
@@ -196,11 +216,32 @@ export class Track {
     return PIT.START_D + (PIT.LANE_D - PIT.START_D) * t;
   }
 
-  distToDirt(x, z) {
-    const A = this.dirtA, B = this.dirtB;
+  _addCut(distA, dA, distB, dB, half, surface) {
+    const A = this.pointAt(distA, dA), B = this.pointAt(distB, dB);
+    this.cuts.push({
+      A: { x: A.x, z: A.z }, B: { x: B.x, z: B.z }, distA: ((distA % this.length) + this.length) % this.length,
+      distB: ((distB % this.length) + this.length) % this.length, half, surface, side: dA < 0 ? -1 : 1,
+      len: Math.hypot(B.x - A.x, B.z - A.z),
+    });
+  }
+
+  static _segDist(x, z, A, B) {
     const abx = B.x - A.x, abz = B.z - A.z;
     const t = Math.max(0, Math.min(1, ((x - A.x) * abx + (z - A.z) * abz) / (abx * abx + abz * abz)));
     return Math.hypot(x - (A.x + abx * t), z - (A.z + abz * t));
+  }
+
+  /** the shortcut whose corridor contains (x, z), or null */
+  cutAt(x, z) {
+    for (const c of this.cuts) if (Track._segDist(x, z, c.A, c.B) <= c.half) return c;
+    return null;
+  }
+
+  /** inside a water splash? */
+  inSplash(q) {
+    if (!q || Math.abs(q.d) > ROAD_HALF + 2) return false;
+    for (const s of this.splash) if (Math.abs(this.wrapDiff(q.dist, s.dist)) <= s.len / 2) return true;
+    return false;
   }
 
   /**
@@ -211,26 +252,31 @@ export class Track {
     let m = -1e9;
     const q = this._q;
     if (this._nearest(x, z, q)) {
-      m = BARRIER - Math.abs(q.d);
+      m = this.barrier - Math.abs(q.d);
       const dp = this.pitCenter(q.u);
       if (dp !== null) {
         const mp = PIT.HALF - Math.abs(q.d - dp);
         if (mp > m) m = mp;
       }
     }
-    const md = DIRT_HALF - this.distToDirt(x, z);
-    return md > m ? md : m;
+    for (const c of this.cuts) {
+      const md = c.half - Track._segDist(x, z, c.A, c.B);
+      if (md > m) m = md;
+    }
+    return m;
   }
 
   surfaceAt(x, z, q) {
-    if (q && Math.abs(q.d) <= ROAD_HALF) return 'road';
-    if (this.distToDirt(x, z) <= DIRT_HALF) return 'dirt';
+    if (q && Math.abs(q.d) <= ROAD_HALF) return this.splash.length && this.inSplash(q) ? 'water' : 'road';
+    const cut = this.cuts.length ? this.cutAt(x, z) : null;
+    if (cut) return cut.surface;
+    if (this.splash.length && this.inSplash(q)) return 'water';
     if (q) {
       const dp = this.pitCenter(q.u);
       if (dp !== null && Math.abs(q.d - dp) <= PIT.HALF) return 'pit';
       if (Math.abs(q.d) <= ROAD_HALF + CURB_W && this.curb[q.i]) return 'curb';
     }
-    return 'grass';
+    return this.kind === 'city' ? 'kerb' : 'grass';
   }
 
   /** pit speed limiter is active on the main pit section */
@@ -320,7 +366,7 @@ export class Track {
       const samples = [];
       for (let i = 0; i < this.N; i++) {
         const nx = this.rx[i] * side, nz = this.rz[i] * side;
-        const x = this.cx[i] + nx * BARRIER, z = this.cz[i] + nz * BARRIER;
+        const x = this.cx[i] + nx * this.barrier, z = this.cz[i] + nz * this.barrier;
         samples.push({ x, z, nx, nz, keep: keepTest(x, z, nx, nz) });
       }
       pushRuns(samples, true, 'barrier');
@@ -336,19 +382,20 @@ export class Track {
       }
       pushRuns(samples, false, 'pit');
     }
-    // dirt shortcut edges
-    const A = this.dirtA, B = this.dirtB;
-    const len = Math.hypot(B.x - A.x, B.z - A.z);
-    const px = -(B.z - A.z) / len, pz = (B.x - A.x) / len;
-    for (const side of [-1, 1]) {
-      const samples = [];
-      for (let t = 0; t <= len; t += 1) {
-        const x = A.x + (B.x - A.x) * (t / len) + px * side * DIRT_HALF;
-        const z = A.z + (B.z - A.z) * (t / len) + pz * side * DIRT_HALF;
-        const nx = px * side, nz = pz * side;
-        samples.push({ x, z, nx, nz, keep: keepTest(x, z, nx, nz) });
+    // shortcut edges
+    for (const c of this.cuts) {
+      const { A, B, len } = c;
+      const px = -(B.z - A.z) / len, pz = (B.x - A.x) / len;
+      for (const side of [-1, 1]) {
+        const samples = [];
+        for (let t = 0; t <= len; t += 1) {
+          const x = A.x + (B.x - A.x) * (t / len) + px * side * c.half;
+          const z = A.z + (B.z - A.z) * (t / len) + pz * side * c.half;
+          const nx = px * side, nz = pz * side;
+          samples.push({ x, z, nx, nz, keep: keepTest(x, z, nx, nz) });
+        }
+        pushRuns(samples, false, c.surface);
       }
-      pushRuns(samples, false, 'dirt');
     }
     return out;
   }

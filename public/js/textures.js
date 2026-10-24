@@ -91,6 +91,138 @@ export function roadTex() {
   });
 }
 
+/** road surface per course: asphalt (city, centre line) / tarmac / gravel / snow / sand / cobble */
+export function roadSurfaceTex(kind = 'circuit', road = 'asphalt') {
+  if (kind === 'circuit') return roadTex();
+  return once('road-' + kind + road, () => {
+    const [c, g] = makeCanvas(64, 64);
+    const r = mulberry32(12);
+    if (road === 'gravel' || road === 'sand' || road === 'snow') {
+      const base = road === 'gravel' ? [138, 124, 106] : road === 'sand' ? [196, 128, 80] : [228, 234, 244];
+      noiseFill(g, 64, 64, base, road === 'snow' ? 6 : 12, r, 2);
+      const peb = road === 'gravel' ? ['#a89880', '#6e6252', '#8a7c68'] : road === 'sand' ? ['#d89a68', '#a8643c', '#e8b080']
+        : ['#ffffff', '#c4d0e4', '#b0bed6'];
+      for (let i = 0; i < 160; i++) dot(g, Math.floor(r() * 64), Math.floor(r() * 64), peb[Math.floor(r() * 3)]);
+      // two packed wheel ruts
+      const rut = road === 'snow' ? 'rgba(150,160,180,0.45)' : 'rgba(70,50,35,0.32)';
+      for (let y = 0; y < 64; y++) {
+        if (r() < 0.85) dot(g, 14 + Math.floor(r() * 2), y, rut, 6, 1);
+        if (r() < 0.85) dot(g, 44 + Math.floor(r() * 2), y, rut, 6, 1);
+      }
+      // loose edges
+      for (let y = 0; y < 64; y += 2) { dot(g, 0, y, shade('#6a5a48', road === 'snow' ? 2.1 : 1), 2 + Math.floor(r() * 3), 2); dot(g, 62 - Math.floor(r() * 3), y, shade('#6a5a48', road === 'snow' ? 2.1 : 1), 3, 2); }
+    } else if (road === 'cobble') {
+      dot(g, 0, 0, '#6a6058', 64, 64);
+      for (let y = 0; y < 64; y += 6) {
+        for (let x = (y / 6) % 2 ? -4 : 0; x < 64; x += 8) {
+          const v = 0.85 + r() * 0.3;
+          dot(g, x + 1, y + 1, shade('#9a8e80', v), 6, 4);
+          dot(g, x + 1, y + 1, shade('#b4a898', v), 6, 1);
+        }
+      }
+      dot(g, 0, 0, '#d8d0c4', 2, 64);
+      dot(g, 62, 0, '#d8d0c4', 2, 64);
+    } else {
+      // asphalt: tarmac stage (white edges) or city street (white edges + dashed centre line)
+      noiseFill(g, 64, 64, [84, 84, 92], 7, r, 2);
+      for (let i = 0; i < 80; i++) dot(g, Math.floor(r() * 64), Math.floor(r() * 64), r() < 0.5 ? '#9a9aa2' : '#46464e');
+      dot(g, 2, 0, '#e8e8e8', 2, 64);
+      dot(g, 60, 0, '#e8e8e8', 2, 64);
+      if (kind === 'city') dot(g, 31, 0, '#f0c830', 2, 30);
+    }
+    return pixelTexture(c);
+  });
+}
+
+/** rally corner cut: loose rocks and boulders */
+export function rocksTex() {
+  return once('rocks', () => {
+    const [c, g] = makeCanvas(64, 64);
+    const r = mulberry32(37);
+    noiseFill(g, 64, 64, [116, 104, 92], 12, r, 2);
+    for (let i = 0; i < 45; i++) {
+      const x = Math.floor(r() * 60), y = Math.floor(r() * 60), w = 2 + Math.floor(r() * 5), h = 2 + Math.floor(r() * 4);
+      dot(g, x, y, '#8c8a86', w, h);
+      dot(g, x, y, '#b8b4ae', w, 1);
+      dot(g, x, y + h - 1, '#4e4a46', w, 1);
+    }
+    return pixelTexture(c);
+  });
+}
+
+/** shallow water across the road (rally splash) */
+export function waterTex() {
+  return once('water', () => {
+    const [c, g] = makeCanvas(32, 32);
+    const r = mulberry32(41);
+    noiseFill(g, 32, 32, [70, 128, 170], 10, r, 2);
+    for (let i = 0; i < 26; i++) dot(g, Math.floor(r() * 30), Math.floor(r() * 32), '#bfe4ff', 2 + Math.floor(r() * 4), 1);
+    return pixelTexture(c);
+  });
+}
+
+/** rally: wooden fence with tape; city: concrete wall with advert boards */
+export function fenceTex() {
+  return once('fence', () => {
+    const [c, g] = makeCanvas(32, 32);
+    dot(g, 0, 0, '#6a4a2a', 32, 32);
+    for (let x = 0; x < 32; x += 8) { dot(g, x, 0, '#8a6038', 3, 32); dot(g, x, 0, '#a87a48', 1, 32); }
+    dot(g, 0, 4, '#d8b070', 32, 3);
+    dot(g, 0, 16, '#d8b070', 32, 3);
+    for (let x = 0; x < 32; x += 6) dot(g, x, 10, x % 12 ? '#f0f0f0' : '#e02020', 6, 2);
+    return pixelTexture(c);
+  });
+}
+
+export function cityWallTex() {
+  return once('citywall', () => {
+    const [c, g] = makeCanvas(64, 32);
+    const r = mulberry32(53);
+    noiseFill(g, 64, 32, [196, 196, 200], 6, r, 2);
+    const ads = [['#e83b3b', '#ffffff'], ['#2a5cc8', '#ffe84a'], ['#20a050', '#ffffff'], ['#f08a20', '#202020']];
+    for (let k = 0; k < 2; k++) {
+      const [bg, fg] = ads[Math.floor(r() * ads.length)];
+      dot(g, 2 + k * 32, 6, bg, 28, 16);
+      for (let i = 0; i < 5; i++) dot(g, 6 + k * 32 + i * 5, 11 + (i % 2) * 2, fg, 3, 5);
+    }
+    dot(g, 0, 0, '#e4e4e8', 64, 2);
+    dot(g, 0, 28, '#8c8c92', 64, 4);
+    return pixelTexture(c);
+  });
+}
+
+/** pavement next to city streets */
+export function sidewalkTex() {
+  return once('sidewalk', () => {
+    const [c, g] = makeCanvas(32, 32);
+    const r = mulberry32(57);
+    noiseFill(g, 32, 32, [170, 168, 164], 6, r, 2);
+    for (let i = 0; i < 32; i += 8) { dot(g, 0, i, '#8e8c88', 32, 1); dot(g, i, 0, '#8e8c88', 1, 32); }
+    dot(g, 0, 0, '#d8d6d2', 3, 32);   // kerb stone along the road
+    return pixelTexture(c);
+  });
+}
+
+/** building facade: rows of windows; lit windows glow at night */
+export function buildingTex(wallHex, variant, night) {
+  return once(`bld${wallHex}${variant}${night}`, () => {
+    const [c, g] = makeCanvas(32, 32);
+    const r = mulberry32(71 + variant * 13);
+    dot(g, 0, 0, wallHex, 32, 32);
+    dot(g, 0, 0, shade(wallHex, 1.1), 32, 1);
+    const win = night ? '#ffd870' : variant % 2 ? '#3a5068' : '#4a6a8a';
+    for (let y = 3; y < 32; y += 8) {
+      for (let x = 3; x < 32; x += 8) {
+        const lit = night ? r() < 0.55 : true;
+        dot(g, x, y, lit ? win : '#20242c', 5, 5);
+        if (!night) dot(g, x, y, '#8ab0d0', 5, 1);
+        dot(g, x, y + 5, shade(wallHex, 0.75), 5, 1);
+      }
+    }
+    return pixelTexture(c);
+  });
+}
+
 export function curbTex() {
   return once('curb', () => {
     const [c, g] = makeCanvas(8, 16);
@@ -118,6 +250,18 @@ export const THEMES = {
     leaves: ['#2e7a3a', '#245e2c', '#3e8a42'], mtn: ['#6a88a8', '#3a6448'], snowCaps: true },
   flower: { ground: [90, 160, 70], tuft: '#4e8a3a', light: '#9ed47a', dots: ['#ff6ab0', '#ffe24a', '#ffffff', '#ff8a3a', '#b08aff'],
     dotCount: 70, pine: 0.15, leaves: ['#5aa84e', '#3e8a3c', '#7cc860'], mtn: ['#9ab0d8', '#78a868'], snowCaps: true },
+  savanna: { ground: [176, 160, 82], tuft: '#9a8a40', light: '#d4c47a', dots: ['#c06a3a', '#8a7a3a'], pine: 0, acacia: true,
+    leaves: ['#6a8a3a', '#4e6e2a', '#8aa84e'], mtn: ['#b89a7a', '#8a7a52'], snowCaps: false },
+  // city streets: paved ground, buildings instead of trees, a skyline on the horizon
+  city: { ground: [118, 118, 124], tuft: '#6c6c74', light: '#9a9aa2', dots: ['#5a5a62'], pine: 0, urban: true,
+    leaves: ['#4e8a44', '#3a6e36', '#68a858'], mtn: ['#8a9ab4', '#66748e'], snowCaps: false,
+    walls: ['#c8c4bc', '#a8b4c4', '#d8c8b0', '#8a96a8', '#b8b0a4'] },
+  harbor: { ground: [126, 124, 120], tuft: '#7a7670', light: '#a4a09a', dots: ['#5c5a56'], pine: 0, urban: true,
+    leaves: ['#4e8a44', '#3a6e36', '#68a858'], mtn: ['#94a8c4', '#6e86a4'], snowCaps: false,
+    walls: ['#e8e0d0', '#f0c8a0', '#c8d8e8', '#e8d0a8', '#ffffff'] },
+  oldtown: { ground: [140, 120, 100], tuft: '#7a6650', light: '#ac9478', dots: ['#6a5848'], pine: 0, urban: true,
+    leaves: ['#4e8a44', '#3a6e36', '#68a858'], mtn: ['#a8a0b8', '#8a7a8a'], snowCaps: false,
+    walls: ['#d8b088', '#c88a68', '#e8d0a8', '#b87858', '#d8c0a0'] },
 };
 
 export function grassTex(theme = 'green') {
@@ -439,8 +583,20 @@ export function mountainTex(theme = 'green') {
         if (mesa) dot(g, x, top, shade(col, 1.25), 1, 1);
       }
     };
-    ridge(26, 5, T.mtn[0], T.snowCaps);
-    ridge(14, 3.5, T.mtn[1], false);
+    if (T.urban) {
+      // city skyline: blocky towers with a few lit windows
+      for (const [col, hMin, hMax] of [[T.mtn[0], 16, 40], [T.mtn[1], 8, 24]]) {
+        for (let x = 0; x < W;) {
+          const w = 5 + Math.floor(r() * 10), h = hMin + Math.floor(r() * (hMax - hMin));
+          dot(g, x, H - h, col, Math.min(w, W - x), h);
+          for (let y = H - h + 2; y < H - 2; y += 4) for (let wx = x + 1; wx < x + w - 1; wx += 3) if (r() < 0.25) dot(g, wx, y, shade(col, 1.35), 1, 1);
+          x += w;
+        }
+      }
+    } else {
+      ridge(26, 5, T.mtn[0], T.snowCaps);
+      ridge(14, 3.5, T.mtn[1], false);
+    }
     const t = pixelTexture(c, { mip: false });
     t.wrapT = THREE.ClampToEdgeWrapping;
     return t;
@@ -536,6 +692,26 @@ export function kartBodyTex(colorHex, num) {
     dot(g, 10, 8, '#f4f4f4', 12, 14);
     dot(g, 9, 9, '#f4f4f4', 14, 12);
     drawText(g, String(num), 16, 12, 1, '#101010', 'center', null);
+    return pixelTexture(c, { mip: false });
+  });
+}
+
+/** rally car side panel: body colour, a contrasting stripe and the door number */
+export function carBodyTex(colorHex, num) {
+  return once('car' + colorHex + num, () => {
+    const [c, g] = makeCanvas(64, 32);
+    dot(g, 0, 0, shade(colorHex, 1.0), 64, 32);
+    dot(g, 0, 0, shade(colorHex, 1.2), 64, 3);
+    dot(g, 0, 26, shade(colorHex, 0.6), 64, 6);
+    dot(g, 0, 18, '#f4f4f4', 64, 3);
+    dot(g, 0, 22, '#202020', 64, 1);
+    // door number plate
+    dot(g, 24, 4, '#f4f4f4', 16, 12);
+    drawText(g, String(num), 32, 7, 1, '#101010', 'center', null);
+    // sponsor stickers
+    dot(g, 6, 8, '#ffe84a', 10, 4);
+    dot(g, 48, 8, '#202020', 10, 4);
+    dot(g, 49, 9, '#f4f4f4', 8, 2);
     return pixelTexture(c, { mip: false });
   });
 }

@@ -3,7 +3,7 @@
 //  dash panels, skills, pit stop logic and lap tracking.
 //  Used by the local player and by host-simulated CPU karts.
 // ============================================================
-import { PHYS, TYRES, SKILL_BY_ID, PIT, KART_R, ROAD_HALF } from './config.js';
+import { PHYS, TYRES, SKILL_BY_ID, PIT, KART_R, CAR_R, ROAD_HALF } from './config.js';
 
 export class Kart {
   constructor(track, { id, skill = 'meister', tyreType = 'M' } = {}) {
@@ -34,6 +34,7 @@ export class Kart {
     this.jamT = 0;         // skill disabled by a rival's Skill Jammer
     this.smokeT = 0;
     this.smokeSlowT = 0;   // inside someone else's smoke screen
+    this.junkieT = 0;      // Dash Junkie: grip bonus while a dash-panel boost lasts
     this.aeroLand = false; // pending Aero Jump landing dash
     this.freezeT = 0;
     this.onDash = -1;
@@ -204,6 +205,7 @@ export class Kart {
     if (this.freezeT > 0) this.freezeT -= dt;
     if (this.smokeT > 0) this.smokeT -= dt;
     if (this.smokeSlowT > 0) this.smokeSlowT -= dt;
+    if (this.junkieT > 0) this.junkieT -= dt;
 
     const working = this.pit.state === 'work';
     const locked = working || this.freezeT > 0 || !env.active;
@@ -223,13 +225,22 @@ export class Kart {
     else { grip *= 1 - PHYS.WET_SLICK_GRIP * wet; topF *= 1 - PHYS.WET_SLICK_SPEED * wet; }
     let accF = burst ? 0.55 : 1;
     if (sk === 'highroller') { topF *= PHYS.HIGHROLLER_MUL; accF *= PHYS.HIGHROLLER_MUL; }
+    const overclocked = sk === 'overclock' && env.spurtMul > 1;
+    if (overclocked) grip *= PHYS.OVERCLOCK_GRIP;
+    if (sk === 'junkie' && this.junkieT > 0) grip *= PHYS.JUNKIE_GRIP;
     topF *= env.spurtMul;
     accF *= env.spurtMul;
 
     let surfSpeed = 1, surfWear = 1, surfGrip = 1;
-    if ((surf === 'grass' || surf === 'dirt') && sk !== 'offroader') {
-      const S = PHYS.SURF[surf];
-      surfSpeed = S.speed; surfWear = S.wear; surfGrip = S.grip;
+    const S = PHYS.SURF[surf];
+    if (S) {
+      if (sk !== 'offroader' || surf === 'water') {
+        surfSpeed = S.speed; surfWear = S.wear; surfGrip = S.grip;
+      } else if (surf === 'rocks') {
+        surfSpeed = PHYS.OFFROAD_ROCKS;
+      }
+    } else if (surf === 'road' || surf === 'curb' || surf === 'pit') {
+      surfGrip = track.roadGrip;   // gravel / snow / sand stages
     }
 
     // ---- slipstream
@@ -354,7 +365,7 @@ export class Kart {
         if (o === this || (o.y || 0) > 1.0) continue;
         const dx = nx - o.x, dz = nz - o.z;
         const d2 = dx * dx + dz * dz;
-        const min = KART_R * 2.1;
+        const min = (track.carMode ? CAR_R : KART_R) * 2.1;
         if (d2 < min * min && d2 > 1e-6) {
           const d = Math.sqrt(d2), ux = dx / d, uz = dz / d;
           const push = (min - d) * 0.6;
@@ -409,6 +420,7 @@ export class Kart {
       const di = track.dashAt(q);
       if (di >= 0 && di !== this.onDash && env.active) {
         this.applyBoost(PHYS.DASH, sk === 'junkie' ? PHYS.JUNKIE : {});
+        if (sk === 'junkie') this.junkieT = PHYS.DASH.dur * PHYS.JUNKIE.dur;
         this.events.push({ type: 'dash' });
       }
       this.onDash = di;
@@ -417,7 +429,6 @@ export class Kart {
     }
 
     // ---- tyre wear
-    const overclocked = sk === 'overclock' && env.spurtMul > 1;
     if (env.active && !env.noWear && !this.airborne && !working && !overclocked) {
       const sp = Math.abs(vf);
       if (sp > 0.5) {

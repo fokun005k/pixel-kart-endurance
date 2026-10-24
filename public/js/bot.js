@@ -89,6 +89,7 @@ export class BotDriver {
     const cond = Math.max(0, k.tyre) / 100;
     let grip = T.grip * (k.tyre <= 0 ? 0.42 : 0.62 + 0.38 * cond);
     grip *= T.wet ? 1 - PHYS.WET_DRY_GRIP * (1 - wet) : 1 - PHYS.WET_SLICK_GRIP * wet;
+    grip *= t.roadGrip || 1;
     const curv = t.curvatureAhead(q.i, 12 + Math.max(0, speed) * 1.4);
     const cornerV = curv > 1e-4 ? Math.sqrt((PHYS.LAT_ACC * grip * this.pace) / curv) : Infinity;
     const vt = Math.min(speedCap, cornerV);

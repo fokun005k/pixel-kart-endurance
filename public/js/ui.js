@@ -1,7 +1,7 @@
 // ============================================================
 //  DOM UI: title / lobby / pit menu / pause / results / audio controls
 // ============================================================
-import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT } from './config.js';
+import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT, CARS, CAR_BY_ID } from './config.js';
 import { sound } from './audio.js';
 import { fmtLap, renderTrackMap } from './hud.js';
 import { fetchRanking, RANKED_DURATIONS, rankingShared } from './records.js';
@@ -19,6 +19,62 @@ function esc(s) {
 }
 
 const MAX_GHOSTS = 4;
+const KINDS = [['circuit', '🏁 サーキット'], ['rally', '🌲 ラリー'], ['city', '🏙 市街地']];
+
+/** side view of a rally car in pixel art (for the car picker) */
+export function drawCarSide(carId, colorHex, W = 96, H = 40) {
+  const S = (CAR_BY_ID[carId] || CAR_BY_ID.yaris).shape;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const k = (W - 8) / 4.6;                 // pixels per metre
+  const gy = H - 3;                        // ground line
+  const x0 = Math.round((W - S.len * k) / 2);
+  const Y = m => Math.round(gy - m * k);
+  const X = m => Math.round(x0 + m * k);   // m = metres from the front bumper
+  const rows = (top, bot, xa0, xa1, xb0, xb1, col) => {
+    // fill a trapezoid row by row (crisp pixels): x range goes from [xa0,xa1] at top to [xb0,xb1] at bottom
+    for (let y = top; y < bot; y++) {
+      const t = (y - top) / Math.max(1, bot - top);
+      const l = Math.round(xa0 + (xb0 - xa0) * t), r = Math.round(xa1 + (xb1 - xa1) * t);
+      g.fillStyle = col; g.fillRect(l, y, r - l, 1);
+    }
+  };
+  const y0 = 0.24, top = y0 + S.bodyH;
+  const cf = S.len / 2 + S.cabZ - S.cab / 2, cr = cf + S.cab;   // cabin front / rear (from the front bumper)
+  // body
+  g.fillStyle = colorHex; g.fillRect(X(0), Y(top), Math.round(S.len * k), Y(y0) - Y(top));
+  g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillRect(X(0), Y(top), Math.round(S.len * k), 1);
+  g.fillStyle = '#f4f4f4'; g.fillRect(X(0.1), Y(y0 + S.bodyH * 0.3), Math.round((S.len - 0.2) * k), 2);
+  // cabin: sloped windscreen, hatch or boot at the back
+  const back = S.trunk ? cr - 0.35 : Math.min(S.len - 0.05, cr);
+  rows(Y(top + S.cabH), Y(top), X(cf + 0.45), X(back - (S.trunk ? 0.1 : 0.25)), X(cf), X(back), colorHex);
+  rows(Y(top + S.cabH) + 2, Y(top) - 1, X(cf + 0.5), X(back - (S.trunk ? 0.18 : 0.32)), X(cf + 0.12), X(back - 0.08), '#1e2a3a');
+  g.fillStyle = colorHex; g.fillRect(X((cf + back) / 2), Y(top + S.cabH), 2, Y(top) - Y(top + S.cabH));
+  // wing / spoiler
+  if (S.wing === 1) { g.fillStyle = colorHex; g.fillRect(X(back - 0.35), Y(top + S.cabH) - 1, Math.round(0.4 * k), 2); }
+  if (S.wing >= 2) {
+    const h = S.wing === 3 ? 0.45 : 0.32;
+    g.fillStyle = '#1a1a1e'; g.fillRect(X(S.len - 0.35), Y(top + h), 2, Y(top) - Y(top + h));
+    g.fillStyle = colorHex; g.fillRect(X(S.len - 0.55), Y(top + h) - 1, Math.round(0.5 * k), 3);
+  }
+  if (S.scoop) { g.fillStyle = '#1a1a1e'; g.fillRect(X(0.7), Y(top) - 2, Math.round(0.45 * k), 2); }
+  // lights, number
+  g.fillStyle = '#fff4c0'; g.fillRect(X(0), Y(top) + 2, 2, 3);
+  g.fillStyle = '#ff3030'; g.fillRect(X(S.len) - 2, Y(top) + 2, 2, 3);
+  if (S.pod) { g.fillStyle = '#fff4c0'; g.fillRect(X(0) + 1, Y(top) - 2, 4, 2); }
+  g.fillStyle = '#f4f4f4'; g.fillRect(X(cf + 0.3), Y(top) + 2, 7, 5);
+  // wheels (+ arches)
+  const wb = S.len * 0.31;
+  for (const m of [S.len / 2 - wb, S.len / 2 + wb]) {
+    const cx = X(m), cy = Y(0.33), r = Math.round(0.33 * k);
+    if (S.flares) { g.fillStyle = colorHex; g.fillRect(cx - r - 2, cy - r - 2, r * 2 + 4, 3); }
+    g.fillStyle = '#18181c';
+    for (let dy = -r; dy <= r; dy++) { const w = Math.round(Math.sqrt(r * r - dy * dy)); g.fillRect(cx - w, cy + dy, w * 2, 1); }
+    g.fillStyle = '#c8c8d0'; g.fillRect(cx - 2, cy - 2, 4, 4);
+  }
+  return c;
+}
 const WEATHER_LABEL = { rain: '☂ 雨', fog: '🌫 霧' };
 
 /** ids of ranking entries set by this browser (highlighted in the tables) */
@@ -271,8 +327,20 @@ export class UI {
     c.innerHTML = '';
     this.courseCards = [];
     this.courses = courses;
+    this.courseKind = 'circuit';
+    const ks = $('course-kind');
+    ks.innerHTML = '';
+    this.kindBtns = {};
+    for (const [k, label] of KINDS) {
+      const b = el('button', 'btn small', `${label}（${courses.filter(co => (co.kind || 'circuit') === k).length}）`);
+      b.type = 'button';
+      b.onclick = () => { sound.sfx('click'); this.showCourseKind(k); };
+      ks.appendChild(b);
+      this.kindBtns[k] = b;
+    }
     courses.forEach((course, i) => {
       const card = el('div', 'course-card');
+      card.dataset.kind = course.kind || 'circuit';
       const map = renderTrackMap(tracks[i], 160, 104, { pad: 6, dot: 2 }).canvas;
       card.appendChild(map);
       card.appendChild(el('div', 'c-name', esc(course.name)));
@@ -285,7 +353,34 @@ export class UI {
     desc.id = 'course-desc';
     c.after(desc);
     this.tracks = tracks;
-    $('ranking-course').innerHTML = courses.map((co, i) => `<option value="${i}">${i + 1}. ${esc(co.name)}（${co.en}）</option>`).join('');
+    $('ranking-course').innerHTML = KINDS.map(([k, label]) => `<optgroup label="${label}">${courses
+      .map((co, i) => ((co.kind || 'circuit') === k ? `<option value="${i}">${esc(co.name)}（${co.en}）</option>` : ''))
+      .join('')}</optgroup>`).join('');
+    this.showCourseKind('circuit');
+    this._buildCarCards();
+  }
+
+  /** lobby: show only the course cards of one category */
+  showCourseKind(kind) {
+    this.courseKind = kind;
+    for (const [k, b] of Object.entries(this.kindBtns)) b.classList.toggle('on', k === kind);
+    for (const card of this.courseCards) card.classList.toggle('other-kind', card.dataset.kind !== kind);
+  }
+
+  _buildCarCards(colorHex = KART_COLORS[0]) {
+    const box = $('car-select');
+    box.innerHTML = '';
+    this.carCards = {};
+    for (const car of CARS) {
+      const card = el('div', 'car-card');
+      card.appendChild(drawCarSide(car.id, colorHex));
+      card.appendChild(el('div', 'c-name', esc(car.name)));
+      card.appendChild(el('div', 'c-desc', esc(car.desc)));
+      card.onclick = () => { sound.sfx('click'); this.h.onSelectCar(car.id); };
+      box.appendChild(card);
+      this.carCards[car.id] = card;
+    }
+    this._carColor = colorHex;
   }
 
   // ---------------- ranking ----------------
@@ -424,6 +519,7 @@ export class UI {
 
     const list = $('player-list');
     list.innerHTML = '';
+    const rally = this.courses && this.courses[room.course] && this.courses[room.course].kind === 'rally';
     for (const p of room.players) {
       const li = el('li', p.id === myId ? 'me' : '');
       li.style.borderLeftColor = KART_COLORS[p.color % KART_COLORS.length];
@@ -437,7 +533,7 @@ export class UI {
         <span class="pname">${esc(p.name)}</span>
         ${tag}
         <span class="tyre-dot" style="background:${T.color}">${p.tyre}</span>
-        <span class="pskill">${skill ? skill.name : ''}</span>`;
+        <span class="pskill">${skill ? skill.name : ''}${rally && CAR_BY_ID[p.car] ? `<br>${CAR_BY_ID[p.car].en}` : ''}</span>`;
       list.appendChild(li);
     }
 
@@ -461,7 +557,17 @@ export class UI {
       card.classList.toggle('sel', i === room.course);
       card.classList.toggle('locked', !isHost);
     });
-    if (this.courses && this.courses[room.course]) $('course-desc').textContent = this.courses[room.course].desc;
+    if (this.courses && this.courses[room.course]) {
+      const course = this.courses[room.course];
+      $('course-desc').textContent = course.desc;
+      const kind = course.kind || 'circuit';
+      if (this._lastCourse !== room.course) { this._lastCourse = room.course; this.showCourseKind(kind); }
+      // rally: pick a car (painted in this player's colour)
+      $('car-section').classList.toggle('hidden', kind !== 'rally');
+      const me = room.players.find(p => p.id === myId);
+      const col = KART_COLORS[(me ? me.color : 0) % KART_COLORS.length];
+      if (col !== this._carColor) this._buildCarCards(col);
+    }
     const ts = $('time-select');
     ts.innerHTML = '';
     for (const [night, label] of [[false, '☀ 昼'], [true, '☾ 夜']]) {
@@ -515,6 +621,7 @@ export class UI {
       : allReady ? 'ホストの開始を待っています…' : 'ほかのプレイヤーの準備を待っています…';
     wait.classList.toggle('blink', this.myReady);
     $('tyre-select').classList.toggle('locked', this.myReady);
+    $('car-select').classList.toggle('locked', this.myReady);
     $('skill-select').classList.toggle('locked', this.myReady);
     this.renderSelection(sel);
   }
@@ -522,6 +629,7 @@ export class UI {
   renderSelection(sel) {
     for (const [id, c] of Object.entries(this.tyreCards)) c.classList.toggle('sel', id === sel.tyre);
     for (const [id, c] of Object.entries(this.skillCards)) c.classList.toggle('sel', id === sel.skill);
+    for (const [id, c] of Object.entries(this.carCards || {})) c.classList.toggle('sel', id === sel.car);
   }
 
   // ---------------- pit ----------------

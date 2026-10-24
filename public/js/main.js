@@ -5,11 +5,11 @@
 import * as THREE from 'three';
 import {
   RENDER_W, RENDER_H, MIRROR, EYE_H, PHYS_STEP, NET_RATE, PHYS, TYRES, TYRE_ORDER,
-  SKILL_BY_ID, KART_COLORS, SMOKE_VISION_TIME, PIT,
+  SKILL_BY_ID, KART_COLORS, PIT, CARS, CAR_BY_ID,
 } from './config.js';
 import { Track } from './track.js';
 import { COURSES } from './courses.js';
-import { buildWorld, createKartModel, createNameTag, createCockpit, createHeadBeam } from './world.js';
+import { buildWorld, createKartModel, createCarModel, createNameTag, createCockpit, createCarCockpit, createHeadBeam } from './world.js';
 import { Kart } from './kart.js';
 import { BotDriver } from './bot.js';
 import { Hud, fmtLap } from './hud.js';
@@ -140,9 +140,9 @@ function loadEnvironment(courseId, night) {
 function loadSel() {
   try {
     const s = JSON.parse(localStorage.getItem('pke.sel') || 'null');
-    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return { tyre: s.tyre, skill: s.skill };
+    if (s && TYRES[s.tyre] && SKILL_BY_ID[s.skill]) return { tyre: s.tyre, skill: s.skill, car: CAR_BY_ID[s.car] ? s.car : 'yaris' };
   } catch { /* ignore */ }
-  return { tyre: 'M', skill: 'meister' };
+  return { tyre: 'M', skill: 'meister', car: 'yaris' };
 }
 function saveSel() {
   try { localStorage.setItem('pke.sel', JSON.stringify(G.sel)); } catch { /* ignore */ }
@@ -201,6 +201,12 @@ const ui = new UI({
   },
   onSelectTyre(t) {
     G.sel.tyre = t;
+    saveSel();
+    ui.renderSelection(G.sel);
+    net.updatePlayer(G.sel);
+  },
+  onSelectCar(c) {
+    G.sel.car = c;
     saveSel();
     ui.renderSelection(G.sel);
     net.updatePlayer(G.sel);
@@ -428,9 +434,14 @@ function pitChoose(t) {
 // ------------------------------------------------------------
 //  Kart models
 // ------------------------------------------------------------
+/** kart on circuits / city streets, rally car on rally stages */
+function vehicleModel(colorHex, num, carId, night = world.night) {
+  return track.carMode ? createCarModel(colorHex, num, carId, night) : createKartModel(colorHex, num, night);
+}
+
 function makeModel(p) {
   const color = KART_COLORS[p.color % KART_COLORS.length];
-  const model = createKartModel(color, p.color + 1, world.night);
+  const model = vehicleModel(color, p.color + 1, p.car);
   model.setTyre(p.tyre);
   model.tyre = p.tyre;
   model.group.add(createNameTag(p.name, color));
@@ -464,7 +475,7 @@ function startDemo() {
   for (let i = 0; i < 5; i++) {
     const k = new Kart(track, { id: 'demo' + i, skill: 'meister', tyreType: TYRE_ORDER[i % 3] });
     k.placeAt(track.length * (i / 5) + 20, (r() - 0.5) * 6);
-    const model = createKartModel(KART_COLORS[i], i + 1, world.night);
+    const model = vehicleModel(KART_COLORS[i], i + 1, CARS[i % CARS.length].id);
     model.setTyre(k.tyreType);
     scene.add(model.group);
     G.demo.push({ kart: k, driver: new BotDriver(k, track, mulberry32(i * 7 + 3), i), model, acc: 0 });
@@ -554,7 +565,7 @@ function startRace(data) {
   me.placeAt(sl.dist, sl.d);
   G.me = me;
   const myColor = KART_COLORS[meInfo.color % KART_COLORS.length];
-  cockpit = createCockpit(myColor, world.night);
+  cockpit = track.carMode ? createCarCockpit(myColor, G.sel.car, world.night) : createCockpit(myColor, world.night);
   cockpit.setTyre(me.tyreType);
 
   const isHost = G.room.hostId === G.myId;
@@ -826,16 +837,18 @@ function updateRace(dt, time) {
 
   // ---- smoke screen
   if (me.smokeT > 0) smoke.emitFromKart(G.myId, me, dt);
+  // effects last only while inside the cloud (a quick fade, no after-effect)
   if (smoke.hit(me.x, me.y + 1, me.z, G.myId)) {
     if (G.smokeVision <= 0) hud.message('SMOKE!', '#d0d0d0', 1, 4);
-    G.smokeVision = SMOKE_VISION_TIME;
-    me.smokeSlowT = 0.4;   // slowed while inside the cloud
+    G.smokeVision = Math.min(1, G.smokeVision + dt * 6);
+    me.smokeSlowT = 0.1;
+  } else {
+    G.smokeVision = Math.max(0, G.smokeVision - dt * 5);
   }
   for (const [id, b] of G.bots) {
-    if (smoke.hit(b.kart.x, b.kart.y + 1, b.kart.z, id)) b.kart.smokeSlowT = 0.4;
+    if (smoke.hit(b.kart.x, b.kart.y + 1, b.kart.z, id)) b.kart.smokeSlowT = 0.1;
   }
-  G.smokeVision = Math.max(0, G.smokeVision - dt);
-  const smokeAmt = Math.min(1, G.smokeVision / 1.2);
+  const smokeAmt = G.smokeVision;
   const wx = race.weather;
   let fogNear = FOG_NEAR + (25 - FOG_NEAR) * 0.7 * wx.rain;
   let fogFar = FOG_FAR + (210 - FOG_FAR) * 0.8 * wx.rain;
@@ -987,7 +1000,7 @@ function updateGhosts(tRace, dt) {
 
 function makeGhostModel(entry) {
   const color = KART_COLORS[entry.color % KART_COLORS.length];
-  const model = createKartModel(color, entry.color + 1, false);
+  const model = vehicleModel(color, entry.color + 1, entry.car || 'yaris', false);
   model.group.traverse((o) => {
     if (!o.material) return;
     o.material.transparent = true;
@@ -1124,7 +1137,7 @@ function buildHudState(remaining, cd, time) {
     standings: entries,
     karts: entries,
     slip: me.slip,
-    smoke: Math.min(1, G.smokeVision / 1.2),
+    smoke: G.smokeVision,
     rearWarn,
     pitInfo,
   };

@@ -1,10 +1,10 @@
 // ============================================================
-//  Scene construction: circuit meshes from primitives + pixel textures,
-//  scenery, karts (remote models) and the first-person cockpit.
+//  Scene construction: circuit / rally stage / city street meshes from
+//  primitives + pixel textures, scenery, karts & rally cars, cockpits.
 // ============================================================
 import * as THREE from 'three';
 import * as TX from './textures.js';
-import { ROAD_HALF, CURB_W, PIT, KART_COLORS, TYRES } from './config.js';
+import { ROAD_HALF, CURB_W, PIT, KART_COLORS, TYRES, CAR_BY_ID } from './config.js';
 
 const Y = { dirt: 0.03, pit: 0.035, road: 0.045, curb: 0.05, decal: 0.06 };
 
@@ -97,6 +97,8 @@ function cloneTex(tex) {
  */
 export function buildWorld(track, { theme = 'green', night = false } = {}) {
   const T = TX.THEMES[theme] || TX.THEMES.green;
+  const kind = track.kind;                       // circuit | rally | city
+  const roadType = track.course.road || 'asphalt';
   const scene = new THREE.Scene();
   const fogColor = night ? TX.NIGHT_HORIZON : TX.SKY_HORIZON;
   scene.background = new THREE.Color(fogColor);
@@ -146,8 +148,27 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
   }
   // road
   const road = new THREE.Mesh(ribbonGeometry(samples, -ROAD_HALF, ROAD_HALF, Y.road),
-    surf(TX.roadTex(), { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
+    surf(TX.roadSurfaceTex(kind, roadType), { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   scene.add(road);
+
+  // city: pavement between the road and the walls (not where the pit lane branches off)
+  if (kind === 'city') {
+    const swMat = surf(TX.sidewalkTex(), { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    for (const side of [-1, 1]) {
+      let runS = [];
+      const flush = () => {
+        if (runS.length > 2) scene.add(new THREE.Mesh(ribbonGeometry(runS, side > 0 ? ROAD_HALF : -track.barrier, side > 0 ? track.barrier : -ROAD_HALF, Y.pit), swMat));
+        runS = [];
+      };
+      for (let i = 0; i <= N; i++) {
+        const sm = samples[i];
+        const u = track.wrapDiff(sm.i * track.spacing, 0);
+        if (side < 0 && u > PIT.U0 - 4 && u < PIT.U1 + 4) { flush(); continue; }
+        runS.push({ ...sm, v: (sm.i * track.spacing) / 8 });
+      }
+      flush();
+    }
+  }
 
   // curbs on corners
   const curbMat = surf(TX.curbTex(), { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
@@ -176,28 +197,49 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
     surf(TX.pitLaneTex(), { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }));
   scene.add(pitMesh);
 
-  // dirt shortcut
-  {
-    const A = track.dirtA, B = track.dirtB;
-    const len = Math.hypot(B.x - A.x, B.z - A.z);
-    const dt = cloneTex(TX.dirtTex());
-    dt.repeat.set(1, len / 9);
-    const geo = new THREE.PlaneGeometry(9, len + 4);
+  // shortcuts: dirt track (circuits) / rocky corner cuts (rally)
+  const r5 = TX.mulberry32(5);
+  for (const ct of track.cuts) {
+    const { A, B, len } = ct;
+    const rocky = ct.surface === 'rocks';
+    const tex = cloneTex(rocky ? TX.rocksTex() : TX.dirtTex());
+    tex.repeat.set(1, len / (ct.half * 2));
+    const geo = new THREE.PlaneGeometry(ct.half * 2, len + 4);
     geo.rotateX(-Math.PI / 2);
-    const m = new THREE.Mesh(geo, surf(dt));
+    const m = new THREE.Mesh(geo, surf(tex));
     m.position.set((A.x + B.x) / 2, Y.dirt, (A.z + B.z) / 2);
     m.rotation.y = Math.atan2(-(B.x - A.x), -(B.z - A.z));
     scene.add(m);
-    // scattered gravel puffs at the borders
-    const r = TX.mulberry32(5);
-    const pebMat = lambert(null, { color: 0x8a7058 });
-    for (let k = 0; k < 40; k++) {
-      const t = r();
-      const side = r() < 0.5 ? -1 : 1;
-      const px = -(B.z - A.z) / len, pz = (B.x - A.x) / len;
-      const s = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.4), pebMat);
-      s.position.set(A.x + (B.x - A.x) * t + px * side * (3.6 + r() * 0.6), 0.08, A.z + (B.z - A.z) * t + pz * side * (3.6 + r() * 0.6));
-      scene.add(s);
+    const px = -(B.z - A.z) / len, pz = (B.x - A.x) / len;
+    if (!rocky) {
+      // scattered gravel puffs at the borders
+      const pebMat = lambert(null, { color: 0x8a7058 });
+      for (let k = 0; k < 40; k++) {
+        const t = r5();
+        const side = r5() < 0.5 ? -1 : 1;
+        const p = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.4), pebMat);
+        p.position.set(A.x + (B.x - A.x) * t + px * side * (3.6 + r5() * 0.6), 0.08, A.z + (B.z - A.z) * t + pz * side * (3.6 + r5() * 0.6));
+        scene.add(p);
+      }
+      continue;
+    }
+    // boulders lying in the cut: drive over them slowly, or jump them
+    const rockMats = [lambert(null, { color: 0x8a8680 }), lambert(null, { color: 0x6e6a64 })];
+    for (let k = 0; k < 22; k++) {
+      const t = 0.12 + r5() * 0.76, off = (r5() - 0.5) * ct.half * 1.6;
+      const sz = 0.5 + r5() * 0.9;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(sz * 1.3, sz * 0.7, sz), rockMats[k % 2]);
+      b.position.set(A.x + (B.x - A.x) * t + px * off, sz * 0.3, A.z + (B.z - A.z) * t + pz * off);
+      b.rotation.y = r5() * Math.PI;
+      scene.add(b);
+    }
+  }
+  // rally water splashes across the road
+  if (track.splash.length) {
+    const wt = TX.waterTex();
+    for (const w of track.splash) {
+      scene.add(decal(track, w.dist, 0, ROAD_HALF * 2 + 4, w.len, wt, Y.decal - 0.002,
+        { color: tint, transparent: true, opacity: 0.85, alphaTest: 0 }));
     }
   }
 
@@ -217,13 +259,19 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
   const dashTex = TX.dashTex();
   for (const p of track.dash) scene.add(decal(track, p.dist, p.d, p.w, p.len, dashTex, Y.decal + 0.004, { color: night ? 0xd8d0c0 : 0xffffff }));
 
-  // ---- walls
+  // ---- walls: tyre walls (circuit), wooden fences / rock walls (rally), concrete with adverts (city)
   const tyreMat = lambert(TX.tyreWallTex(), { side: THREE.DoubleSide });
   const concMat = lambert(TX.concreteTex(), { side: THREE.DoubleSide });
+  const fenceMat = lambert(TX.fenceTex(), { side: THREE.DoubleSide });
+  const rockWallMat = lambert(TX.rocksTex(), { side: THREE.DoubleSide });
+  const cityMat = lambert(TX.cityWallTex(), { side: THREE.DoubleSide });
   for (const w of track.wallLines()) {
-    const isBarrier = w.kind !== 'pit';
-    const geo = wallGeometry(w.pts, isBarrier ? 1.2 : 1.1, 0.5, isBarrier ? 4 : 6);
-    scene.add(new THREE.Mesh(geo, isBarrier ? tyreMat : concMat));
+    let mat = tyreMat, h = 1.2, tl = 4;
+    if (w.kind === 'pit') { mat = concMat; h = 1.1; tl = 6; }
+    else if (w.kind === 'rocks') { mat = rockWallMat; h = 0.8; tl = 4; }
+    else if (w.kind === 'barrier' && kind === 'rally') { mat = fenceMat; h = 1.0; tl = 4; }
+    else if (w.kind === 'barrier' && kind === 'city') { mat = cityMat; h = 1.8; tl = 8; }
+    scene.add(new THREE.Mesh(wallGeometry(w.pts, h, 0.5, tl), mat));
   }
 
   // ---- start gantry with countdown lights
@@ -231,10 +279,10 @@ export function buildWorld(track, { theme = 'green', night = false } = {}) {
   scene.add(gantry.group);
 
   // ---- grandstands (outside of the home straight), garages (pit side)
-  buildGrandstands(scene);
+  if (kind === 'rally') buildServicePark(scene); else buildGrandstands(scene);
   buildGarages(scene);
   buildSigns(scene, track);
-  buildTrees(scene, track, T, night);
+  if (kind === 'city') buildBuildings(scene, track, T, night); else buildTrees(scene, track, T, night);
   if (night) buildLamps(scene, track);
 
   // ---- weather: unlit surfaces get darker, the lights dim, the sky fades into grey
@@ -412,6 +460,80 @@ function buildGrandstands(scene) {
   }
 }
 
+/** rally: service tents and spectators instead of grandstands */
+function buildServicePark(scene) {
+  const cols = [0xd83a2a, 0x2a5cc8, 0xf0c020, 0x2a9a50, 0xf4f4f4];
+  const pole = lambert(null, { color: 0x50505a });
+  let k = 0;
+  for (const cx of [-70, -38, -6, 26, 58]) {
+    const col = cols[k++ % cols.length];
+    const g = new THREE.Group();
+    g.position.set(cx, 0, 24);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(9, 3, 4, 1), lambert(null, { color: col }));
+    roof.rotation.y = Math.PI / 4;
+    roof.position.y = 5.5;
+    g.add(roof);
+    for (const [px, pz] of [[-5.5, -5.5], [5.5, -5.5], [-5.5, 5.5], [5.5, 5.5]]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.25, 4, 0.25), pole);
+      p.position.set(px, 2, pz);
+      g.add(p);
+    }
+    scene.add(g);
+  }
+  // spectators along the start straight (crowd texture on low banks)
+  const ct = cloneTex(TX.crowdTex());
+  ct.repeat.set(14, 1);
+  const bank = new THREE.Mesh(new THREE.BoxGeometry(160, 1.6, 2.5), [lambert(null, { color: 0x5a6a48 }), lambert(null, { color: 0x5a6a48 }),
+    lambert(null, { color: 0x5a6a48 }), lambert(null, { color: 0x5a6a48 }), lambert(null, { color: 0x5a6a48 }), lambert(ct)]);
+  bank.position.set(-5, 0.8, 15);
+  scene.add(bank);
+}
+
+/** city: blocks of buildings along both sides of the streets */
+function buildBuildings(scene, track, T, night) {
+  const r = TX.mulberry32(4321);
+  const roofMat = lambert(null, { color: night ? 0x2a2e3a : 0x6a6a72 });
+  const mats = new Map();
+  const facade = (wall, v) => {
+    const key = wall + v;
+    if (!mats.has(key)) {
+      const tex = TX.buildingTex(wall, v, night);
+      mats.set(key, night ? new THREE.MeshBasicMaterial({ map: tex }) : lambert(tex));
+    }
+    return mats.get(key);
+  };
+  const placed = [];
+  const free = (x, z, rad) => placed.every(p => Math.hypot(p.x - x, p.z - z) > p.rad + rad);
+  for (let dist = 0; dist < track.length; dist += 9) {
+    for (const side of [-1, 1]) {
+      const w = 10 + r() * 8, dpt = 8 + r() * 8;
+      const off = track.barrier + 2 + dpt / 2;
+      const p = track.pointAt(dist, side * off);
+      const rad = Math.hypot(w, dpt) / 2;
+      if (Math.abs(p.x) < 130 && p.z > -50 && p.z < 45) continue;      // pit building & grandstands
+      // the whole footprint must stay clear of every street
+      let ok = true;
+      for (const [a, b] of [[0, 0], [w / 2, dpt / 2], [-w / 2, dpt / 2], [w / 2, -dpt / 2], [-w / 2, -dpt / 2]]) {
+        const x = p.x + p.tx * a + p.rx * b, z = p.z + p.tz * a + p.rz * b;
+        if (track.depth(x, z) > -1.5) { ok = false; break; }
+      }
+      if (!ok || !free(p.x, p.z, rad)) continue;
+      placed.push({ x: p.x, z: p.z, rad });
+      const h = 7 + Math.floor(r() * (T === TX.THEMES.harbor ? 3 : 7)) * 4;
+      const wall = T.walls[Math.floor(r() * T.walls.length)];
+      const fm = facade(wall, Math.floor(r() * 3));
+      const box = new THREE.Mesh(new THREE.BoxGeometry(dpt, h, w), [fm, fm, roofMat, roofMat, fm, fm]);
+      for (const m of [fm]) {
+        // repeat the window grid with the facade size (cloned textures are disposed with the world)
+        if (!m.userData.sized) { m.userData.sized = true; m.map = cloneTex(m.map); m.map.repeat.set(2, 2); }
+      }
+      box.position.set(p.x, h / 2, p.z);
+      box.rotation.y = p.heading;   // local z (w) along the street, local x (dpt) away from it
+      scene.add(box);
+    }
+  }
+}
+
 function buildGarages(scene) {
   const conc = lambert(TX.concreteTex());
   const gt = cloneTex(TX.garageTex());
@@ -446,20 +568,31 @@ function buildSigns(scene, track) {
     }
     scene.add(g);
   };
-  // the dirt-shortcut hairpin: chevrons on the outside of the apex, boards before it
-  const inner = track.hairpinSide;                          // -1: left hairpin, +1: right hairpin
-  const span = ((track.dirtDistB - track.dirtDistA) % track.length + track.length) % track.length;
-  const apex = track.dirtDistA + span / 2;
-  const chevron = inner < 0 ? TX.chevronTex() : TX.chevronTex(true);
-  for (let k = -3; k <= 3; k++) board(apex + k * 9, -inner * 13.5, chevron, 2.2, 2.2, false);
-  board(track.dirtDistA - 40, -inner * 13, TX.paintTextTex('100', '#111111', '#f4f4f4', 3), 2.4, 1.2);
-  board(track.dirtDistA - 14, inner * 13, TX.paintTextTex('DIRT', '#ffe84a', '#7a4a20', 3), 3, 1.2);
+  for (const ct of track.cuts) {
+    const inner = ct.side;                                  // -1: left corner, +1: right corner
+    const span = ((ct.distB - ct.distA) % track.length + track.length) % track.length;
+    const apex = ct.distA + span / 2;
+    const out = track.barrier + 2;
+    if (ct.surface === 'dirt') {
+      // the dirt-shortcut hairpin: chevrons on the outside of the apex, boards before it
+      const chevron = inner < 0 ? TX.chevronTex() : TX.chevronTex(true);
+      for (let k = -3; k <= 3; k++) board(apex + k * 9, -inner * 13.5, chevron, 2.2, 2.2, false);
+      board(ct.distA - 40, -inner * 13, TX.paintTextTex('100', '#111111', '#f4f4f4', 3), 2.4, 1.2);
+      board(ct.distA - 14, inner * 13, TX.paintTextTex('DIRT', '#ffe84a', '#7a4a20', 3), 3, 1.2);
+    } else {
+      // rally corner cut: a "JUMP!" board on the inside, chevrons on the outside
+      const chevron = inner < 0 ? TX.chevronTex() : TX.chevronTex(true);
+      for (let k = -1; k <= 1; k++) board(apex + k * 10, -inner * out, chevron, 2.2, 2.2, false);
+      board(ct.distA - 22, inner * out, TX.paintTextTex('JUMP!', '#ffffff', '#c03a20', 3), 3, 1.2);
+    }
+  }
   // pit entry sign
-  board(track.uToDist(-150), -13, TX.paintTextTex('PIT IN', '#ffffff', '#2a5cc8', 3), 4, 1.4, false);
+  const edge = track.barrier + 1.5;
+  board(track.uToDist(-150), -edge, TX.paintTextTex('PIT IN', '#ffffff', '#2a5cc8', 3), 4, 1.4, false);
   // corner boards before T1 (every course turns left there)
   const t1 = track.project(190, 0);
-  board(t1.dist - 50, 13, TX.paintTextTex('100', '#111111', '#f4f4f4', 3), 2.4, 1.2);
-  board(t1.dist - 25, 13, TX.paintTextTex('50', '#111111', '#f4f4f4', 3), 2.4, 1.2);
+  board(t1.dist - 50, edge, TX.paintTextTex('100', '#111111', '#f4f4f4', 3), 2.4, 1.2);
+  board(t1.dist - 25, edge, TX.paintTextTex('50', '#111111', '#f4f4f4', 3), 2.4, 1.2);
 }
 
 function buildTrees(scene, track, T, night) {
@@ -470,12 +603,24 @@ function buildTrees(scene, track, T, night) {
   const roundMats = [sprite(TX.roundTreeTex(T.leaves, 0)), sprite(TX.roundTreeTex([T.leaves[2], T.leaves[0], T.leaves[2]], 1))];
   const cactusMat = T.cactus ? sprite(TX.cactusTex()) : null;
   const { minX, maxX, minZ, maxZ } = track.bbox;
-  const max = T.cactus ? 260 : T.pine > 0.8 ? 700 : 520;
+  const rally = track.kind === 'rally';
+  const max = (T.cactus ? 260 : T.acacia ? 220 : T.pine > 0.8 ? 700 : 520) * (rally ? 1.5 : 1);
+  const acaciaMat = T.acacia ? sprite(TX.roundTreeTex(T.leaves, 1)) : null;
   let placed = 0;
-  for (let n = 0; n < 6000 && placed < max; n++) {
+  for (let n = 0; n < 9000 && placed < max; n++) {
     const x = minX - 160 + r() * (maxX - minX + 320);
     const z = minZ - 160 + r() * (maxZ - minZ + 320);
-    if (track.depth(x, z) > -6) continue;
+    if (track.depth(x, z) > (rally ? -2.5 : -6)) continue;   // rally: the forest comes right up to the fence
+    if (acaciaMat && r() < 0.8) {
+      // savanna: wide, flat-topped acacia
+      const h = 5 + r() * 3;
+      const s = new THREE.Sprite(acaciaMat);
+      s.scale.set(h * 1.9, h * 0.75, 1);
+      s.position.set(x, h * 0.55, z);
+      scene.add(s);
+      placed++;
+      continue;
+    }
     if (Math.abs(x) < 115 && z > -42 && z < 40) continue; // grandstand / garage area
     let mat, h, w;
     if (cactusMat && r() < 0.65) {
@@ -584,6 +729,151 @@ export function createNameTag(name, colorHex) {
   s.scale.set(4, 0.75, 1);
   s.position.y = 2.3;
   return s;
+}
+
+// ============================================================
+//  Rally cars (same interface as the kart model). Front = local -z.
+// ============================================================
+export function createCarModel(colorHex, num, carId = 'yaris', night = false) {
+  const S = (CAR_BY_ID[carId] || CAR_BY_ID.yaris).shape;
+  const g = new THREE.Group();
+  const col = new THREE.Color(colorHex);
+  const paint = lambert(null, { color: col });
+  const livery = lambert(TX.carBodyTex(colorHex, num));
+  const glass = lambert(null, { color: 0x1e2a3a });
+  const dark = lambert(null, { color: 0x1a1a1e });
+  const add = (w, h, d, mat, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  const y0 = 0.24, top = y0 + S.bodyH, L = S.len, half = L / 2;
+  // body (sides carry the livery), cabin (glass all round, painted roof)
+  add(1.8, S.bodyH, L, [livery, livery, paint, dark, paint, paint], 0, y0 + S.bodyH / 2, 0);
+  add(1.52, S.cabH, S.cab, [glass, glass, paint, dark, glass, glass], 0, top + S.cabH / 2, S.cabZ);
+  // bumpers & grille
+  add(1.84, 0.18, 0.12, dark, 0, y0 + 0.1, -half - 0.02);
+  add(1.84, 0.18, 0.12, dark, 0, y0 + 0.1, half + 0.02);
+  add(1.0, 0.18, 0.04, dark, 0, y0 + S.bodyH * 0.55, -half - 0.02);
+  // lights
+  const headMat = new THREE.MeshBasicMaterial({ color: 0xfff4c0 });
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
+  for (const sx of [-1, 1]) {
+    add(0.34, 0.12, 0.04, headMat, sx * 0.62, top - 0.14, -half - 0.03);
+    add(0.32, 0.12, 0.04, tailMat, sx * 0.64, top - 0.12, half + 0.03);
+  }
+  if (S.pod) for (let k = 0; k < 4; k++) add(0.18, 0.18, 0.08, headMat, -0.48 + k * 0.32, top + 0.02, -half + 0.05);
+  if (S.scoop) add(0.5, 0.1, 0.5, dark, 0, top + 0.05, -half + 0.9);
+  // spoilers / wings
+  const cabRear = S.cabZ + S.cab / 2;
+  if (S.wing === 1) add(1.42, 0.06, 0.32, paint, 0, top + S.cabH - 0.02, cabRear + 0.05);
+  if (S.wing >= 2) {
+    const h = S.wing === 3 ? 0.45 : 0.32;
+    for (const sx of [-1, 1]) add(0.06, h, 0.06, dark, sx * 0.55, top + h / 2, half - 0.3);
+    add(S.wing === 3 ? 1.8 : 1.68, 0.06, 0.36, paint, 0, top + h, half - 0.3);
+  }
+  // wheels, arches, mud flaps
+  const wb = L * 0.31;
+  const wheels = [];
+  const wheelMat = lambert(TX.wheelTex());
+  const hubMat = new THREE.MeshLambertMaterial({ color: 0xffd23b });
+  for (const [x, z] of [[0.8, -wb], [-0.8, -wb], [0.8, wb], [-0.8, wb]]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.33, z);
+    const wg = new THREE.CylinderGeometry(0.33, 0.33, 0.26, 10);
+    wg.rotateZ(Math.PI / 2);
+    const wm = new THREE.Mesh(wg, wheelMat);
+    pivot.add(wm);
+    const hg = new THREE.CylinderGeometry(0.15, 0.15, 0.28, 8);
+    hg.rotateZ(Math.PI / 2);
+    pivot.add(new THREE.Mesh(hg, hubMat));
+    g.add(pivot);
+    wheels.push({ pivot, mesh: wm, front: z < 0 });
+    if (S.flares) add(0.14, 0.3, 0.95, paint, Math.sign(x) * 0.96, y0 + 0.36, z);
+    add(0.36, 0.26, 0.04, dark, Math.sign(x) * 0.76, 0.22, z + 0.45);
+  }
+  // boost flame from the exhaust (points backwards = +z)
+  const flameGeo = new THREE.ConeGeometry(0.16, 0.9, 6);
+  flameGeo.rotateX(Math.PI / 2);
+  const flame = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({ color: 0xffa020 }));
+  flame.position.set(0.5, 0.32, half + 0.5);
+  flame.visible = false;
+  g.add(flame);
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.2, L + 0.4),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.07;
+  g.add(shadow);
+  let beam = null;
+  if (night) {
+    beam = createHeadBeam(16, 9);
+    beam.position.y = 0.08;
+    g.add(beam);
+  }
+  return {
+    group: g, wheels, flame, shadow, hubMat, beam,
+    setTyre(type) {
+      const T = TYRES[type];
+      if (T) hubMat.color.setHex(T.hex);
+    },
+  };
+}
+
+/** in-car view for rally: bonnet, dashboard, slim A-pillars and the roof edge */
+export function createCarCockpit(colorHex, carId = 'yaris', night = false) {
+  const S = (CAR_BY_ID[carId] || CAR_BY_ID.yaris).shape;
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(night ? 0x8898d0 : 0xe8f4ff, 0x404040, night ? 0.8 : 1.6));
+  const sun = new THREE.DirectionalLight(night ? 0xb0c0ff : 0xffffff, night ? 0.6 : 1.6);
+  sun.position.set(0.5, 2, 1);
+  scene.add(sun);
+  const cam = new THREE.PerspectiveCamera(72, 16 / 9, 0.01, 30);
+  const root = new THREE.Group();
+  scene.add(root);
+  const paint = lambert(null, { color: new THREE.Color(colorHex) });
+  const dark = lambert(null, { color: 0x18181c });
+  const trim = lambert(null, { color: 0x2c2c34 });
+  const add = (w, h, d, mat, x, y, z, rx = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.rotation.set(rx, 0, rz);
+    root.add(m);
+    return m;
+  };
+  // bonnet (sloping away) with its edges, optional duct and light pod: the lower quarter of the view
+  add(1.75, 0.06, 2.2, paint, 0, -0.62, -2.05, 0.05);
+  for (const sx of [-1, 1]) add(0.1, 0.1, 2.1, paint, sx * 0.86, -0.59, -2.0, 0.05);
+  if (S.scoop) add(0.42, 0.07, 0.4, dark, 0, -0.56, -1.7, 0.05);
+  if (S.pod) {
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+    for (let k = 0; k < 4; k++) add(0.16, 0.14, 0.06, lamp, -0.48 + k * 0.32, -0.6, -3.12);
+  }
+  // low dashboard, door tops, slim A-pillars at the edges of the view, roof edge at the very top
+  add(1.9, 0.2, 0.45, trim, 0, -0.62, -0.68);
+  add(1.9, 0.03, 0.47, dark, 0, -0.52, -0.68);
+  for (const sx of [-1, 1]) {
+    add(0.1, 0.25, 1.2, trim, sx * 1.0, -0.55, -0.4);
+    add(0.06, 1.1, 0.06, dark, sx * 0.93, 0.0, -0.8, -0.45, sx * 0.06);
+  }
+  add(1.9, 0.06, 0.4, dark, 0, 0.52, -0.72);
+  // steering wheel: only its top rim shows at the bottom of the view
+  const wheelPivot = new THREE.Group();
+  wheelPivot.position.set(0, -0.5, -0.6);
+  wheelPivot.rotation.x = -0.4;
+  const wheelInner = new THREE.Group();
+  wheelInner.add(new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.42),
+    new THREE.MeshBasicMaterial({ map: TX.steeringTex(colorHex), transparent: true, alphaTest: 0.5 })));
+  wheelPivot.add(wheelInner);
+  root.add(wheelPivot);
+  const hubMat = new THREE.MeshLambertMaterial({ color: 0xffd23b });
+  return {
+    scene, cam, root, wheelInner, frontWheels: [], hubMat,
+    setTyre(type) {
+      const T = TYRES[type];
+      if (T) hubMat.color.setHex(T.hex);
+    },
+  };
 }
 
 // ============================================================

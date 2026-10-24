@@ -40,11 +40,13 @@ export function renderTrackMap(tr, W, H, { background = null, pad = 8, dot = 2, 
   const g = c.getContext('2d');
   if (background) { g.fillStyle = background; g.fillRect(0, 0, W, H); }
   const P = (x, z) => [Math.round(ox + x * sc), Math.round(oz + z * sc)];
-  // dirt shortcut
-  const a = P(tr.dirtA.x, tr.dirtA.z), b = P(tr.dirtB.x, tr.dirtB.z);
-  g.strokeStyle = '#b07a40';
+  // shortcuts: dirt (brown) / rally rock cuts (grey)
   g.lineWidth = dot;
-  g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+  for (const ct of tr.cuts) {
+    const a = P(ct.A.x, ct.A.z), b = P(ct.B.x, ct.B.z);
+    g.strokeStyle = ct.surface === 'rocks' ? '#9a948c' : '#b07a40';
+    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+  }
   // track (crisp pixel dots)
   g.fillStyle = '#e8e8f0';
   for (let i = 0; i < tr.N; i += 1) {
@@ -70,6 +72,13 @@ export function renderTrackMap(tr, W, H, { background = null, pad = 8, dot = 2, 
     // yellow tick pointing along the travel direction
     g.fillStyle = '#ffe84a';
     for (let k = 0; k <= hs; k++) g.fillRect(x + Math.round(p.tx * k), y + Math.round(p.tz * k), 1, 1);
+  }
+  // water splashes (rally): blue blobs
+  for (const w of tr.splash) {
+    const p = tr.pointAt(w.dist, 0);
+    const [x, y] = P(p.x, p.z);
+    g.fillStyle = '#3b9cff';
+    g.fillRect(x - hs, y - hs, dashSize, dashSize);
   }
   // start line
   const s = P(0, 0);
