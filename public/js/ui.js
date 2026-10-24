@@ -4,7 +4,7 @@
 import { TYRES, TYRE_ORDER, SKILLS, SKILL_BY_ID, KART_COLORS, PIT } from './config.js';
 import { sound } from './audio.js';
 import { fmtLap, renderTrackMap } from './hud.js';
-import { fetchRanking, RANKED_DURATIONS } from './records.js';
+import { fetchRanking, RANKED_DURATIONS, rankingShared } from './records.js';
 
 const $ = id => document.getElementById(id);
 
@@ -325,6 +325,9 @@ export class UI {
     body.innerHTML = '<tr><td colspan="7" class="ranking-empty">読み込み中…</td></tr>';
     const entries = await this.ranking(course, duration, force);
     if (this.rankView.course !== course || this.rankView.duration !== duration) return;
+    $('ranking-scope').textContent = rankingShared === null ? ''
+      : rankingShared ? '🌐 全サーバー共通のランキングです。'
+        : '⚠ このサーバーだけのランキングです（共有データベース未設定。無料サーバーでは再起動で消えることがあります）。';
     body.innerHTML = '';
     if (!entries.length) {
       body.innerHTML = '<tr><td colspan="7" class="ranking-empty">まだ記録がありません。このコースでレースを最後まで走りきると記録されます。</td></tr>';
@@ -338,7 +341,7 @@ export class UI {
       const skill = SKILL_BY_ID[e.skill] || SKILL_BY_ID.none;
       tr.innerHTML = `
         <td class="pos">${i + 1}</td>
-        <td><span class="chip" style="background:${KART_COLORS[e.color % KART_COLORS.length]}"></span>${esc(e.name)}</td>
+        <td><span class="chip" style="background:${KART_COLORS[e.color % KART_COLORS.length]}"></span>${esc(e.name)}${e.hasGhost === false ? '' : ' <span title="ゴーストあり">👻</span>'}</td>
         <td>${dt.km} km<br><small>${dt.laps}</small></td>
         <td>${fmtLap(e.bestLap)}</td>
         <td>${esc(skill.name)}</td>
@@ -354,6 +357,7 @@ export class UI {
         `ピット ${Math.max(0, e.tyres.length - 1)}回`,
       ];
       if (e.noSkills) cond.push('個性なしルール');
+      cond.push(e.hasGhost === false ? 'ゴーストなし（複数人のレース）' : '👻 ゴーストあり');
       detail.innerHTML = `<td colspan="7">${cond.join(' ・ ')}<div class="laps">${laps || 'ラップ記録なし'}</div></td>`;
       tr.onclick = () => detail.classList.toggle('hidden');
       body.append(tr, detail);
@@ -381,12 +385,13 @@ export class UI {
     }
     const trackLen = this.tracks ? this.tracks[room.course].length : 1500;
     entries.forEach((e, i) => {
-      const row = el('label', 'ghost-row' + (sel.has(e.id) ? ' on' : ''));
+      const noGhost = e.hasGhost === false;
+      const row = el('label', 'ghost-row' + (sel.has(e.id) ? ' on' : '') + (noGhost ? ' no-ghost' : ''));
       row.style.borderLeftColor = KART_COLORS[e.color % KART_COLORS.length];
       const cb = el('input');
       cb.type = 'checkbox';
       cb.checked = sel.has(e.id);
-      cb.disabled = !isHost;
+      cb.disabled = !isHost || noGhost;
       cb.onchange = () => {
         const ids = (this.room.ghosts || []).filter(id => id !== e.id);
         if (cb.checked) {
@@ -402,7 +407,7 @@ export class UI {
       row.insertAdjacentHTML('beforeend', `
         <span class="g-rank">${i + 1}位</span>
         <span class="g-name">${esc(e.name)}</span>
-        <span class="g-dist">${dt.km}km ・ ${fmtLap(e.bestLap)} ・ ${esc(skill.name)}</span>`);
+        <span class="g-dist">${noGhost ? 'ゴーストなし（複数人のレース）' : `${dt.km}km ・ ${fmtLap(e.bestLap)} ・ ${esc(skill.name)}`}</span>`);
       list.appendChild(row);
     });
   }
@@ -478,11 +483,11 @@ export class UI {
         box.appendChild(b);
       }
     };
-    seg('weather-select', room.weather !== false, [[true, '☂ 変化あり'], [false, '☀ 晴れのみ']], v => this.h.onWeather(v));
+    seg('weather-select', !!room.weather, [[false, '☀ 晴れのみ'], [true, '☂ 変化あり']], v => this.h.onWeather(v));
     seg('skillrule-select', !!room.noSkills, [[false, '個性あり'], [true, '個性なし']], v => this.h.onNoSkills(v));
-    $('rule-note').textContent = (room.weather !== false
-      ? '天候：基本は晴れ。ときどき雨や霧が発生（雨の路面ではウェットタイヤが有利）。'
-      : '天候：レース中ずっと晴れ。') + (isHost ? '' : '（ルールはホストが設定）');
+    $('rule-note').textContent = (room.weather
+      ? '天候：基本は晴れ。たまに雨や霧が発生します（雨の路面ではウェットタイヤが有利）。'
+      : '天候：レース中ずっと晴れ（「変化あり」にすると、たまに雨や霧が発生します）。') + (isHost ? '' : '（ルールはホストが設定）');
     $('noskill-note').classList.toggle('hidden', !room.noSkills);
     $('skill-select').classList.toggle('off', !!room.noSkills);
 

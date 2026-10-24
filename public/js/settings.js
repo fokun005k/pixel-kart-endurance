@@ -2,7 +2,7 @@
 //  Settings modal: key bindings (PC), smartphone controls, sound
 //  + the toolbar of the touch-button layout editor
 // ============================================================
-import { ACTIONS, TOUCH_ITEMS, keyLabel } from './controls.js';
+import { ACTIONS, TOUCH_ITEMS, HUD_ITEMS, keyLabel } from './controls.js';
 import { sound } from './audio.js';
 
 const $ = id => document.getElementById(id);
@@ -16,9 +16,10 @@ export class Settings {
    * @param {{bindings: import('./controls.js').KeyBindings, layout: import('./controls.js').TouchLayout,
    *          touch: import('./touch.js').TouchControls, toast: (msg:string)=>void}} deps
    */
-  constructor({ bindings, layout, touch, toast }) {
+  constructor({ bindings, layout, hudLayout, touch, toast }) {
     this.bindings = bindings;
     this.layout = layout;
+    this.hudLayout = hudLayout;
     this.touch = touch;
     this.toast = toast;
     this.capture = null;   // { action, slot, el } while waiting for a key
@@ -181,6 +182,13 @@ export class Settings {
       this.refreshTouch();
     });
     $('btn-layout-edit').addEventListener('click', () => { sound.sfx('click'); this._beginEdit(); });
+    $('btn-hud-edit').addEventListener('click', () => { sound.sfx('click'); this._beginEdit(); });
+    $('btn-hud-reset').addEventListener('click', () => {
+      sound.sfx('click');
+      this.hudLayout.reset(this.touch.hudMode);
+      this.hudLayout.save();
+      this.toast('画面表示の配置を初期状態に戻しました');
+    });
     $('btn-layout-reset').addEventListener('click', () => {
       sound.sfx('click');
       this.layout.reset();
@@ -228,6 +236,7 @@ export class Settings {
       const mode = this.layout.data.steerMode;
       this.layout.reset();
       this.layout.data.steerMode = mode;
+      this.hudLayout.reset(this.touch.hudMode);
       this.touch.applyLayout();
       this._syncEditor(this.touch.selected);
     });
@@ -245,13 +254,25 @@ export class Settings {
     this.touch.onDrag = (id) => this._dodge(id);
   }
 
-  /** number of buttons whose centre lies under a toolbar placed at the top / bottom */
+  /** screen y of the centre of an editable item (touch button or HUD panel) */
+  _itemY(id) {
+    if (id.startsWith('hud:')) {
+      const r = this.touch.handleRect(id.slice(4));
+      return r.top + r.height / 2;
+    }
+    return this.layout.data.items[id].y * innerHeight;
+  }
+
+  /** number of items whose centre lies under a toolbar placed at the top / bottom */
   _covered(bottom) {
     const h = $('layout-editor').getBoundingClientRect().height + 12;
+    const ids = HUD_ITEMS.filter(it => this.hudLayout.get(this.touch.hudMode)[it.id]).map(it => `hud:${it.id}`);
+    if (this.touch.enabled) {
+      for (const it of TOUCH_ITEMS) if (!it.steerButtons || this.layout.data.steerMode === 'buttons') ids.push(it.id);
+    }
     let n = 0;
-    for (const it of TOUCH_ITEMS) {
-      if (it.steerButtons && this.layout.data.steerMode !== 'buttons') continue;
-      const y = this.layout.data.items[it.id].y * innerHeight;
+    for (const id of ids) {
+      const y = this._itemY(id);
       if (bottom ? y > innerHeight - h : y < h) n++;
     }
     return n;
@@ -266,11 +287,12 @@ export class Settings {
   _dodge(id) {
     const bar = $('layout-editor');
     const r = bar.getBoundingClientRect();
-    const y = this.layout.data.items[id].y * innerHeight;
+    const y = this._itemY(id);
     if (y > r.top - 20 && y < r.bottom + 20) bar.classList.toggle('bottom');
   }
 
   _beginEdit() {
+    this._editFrom = this.tab;
     this.close();
     $('layout-editor').classList.remove('hidden');
     this.touch.startEdit(id => this._syncEditor(id));
@@ -279,6 +301,14 @@ export class Settings {
   }
 
   _syncEditor(id) {
+    const hudItem = id.startsWith('hud:') && HUD_ITEMS.find(t => `hud:${t.id}` === id);
+    $('layout-editor').classList.toggle('hud-sel', !!hudItem);
+    if (hudItem) {
+      $('le-selected').textContent = `${hudItem.label}（表示）`;
+      $('le-opacity').value = Math.round(this.layout.data.opacity * 100);
+      $('le-opacity-val').textContent = `${Math.round(this.layout.data.opacity * 100)}%`;
+      return;
+    }
     const it = TOUCH_ITEMS.find(t => t.id === id);
     $('le-selected').textContent = it ? it.label : id;
     const v = this.layout.data.items[id];
@@ -291,7 +321,7 @@ export class Settings {
   _endEdit(keep) {
     this.touch.stopEdit(keep);
     $('layout-editor').classList.add('hidden');
-    this.toast(keep ? 'ボタン配置を保存しました' : '編集を取り消しました');
-    this.open('touch');
+    this.toast(keep ? '配置を保存しました' : '編集を取り消しました');
+    this.open(this._editFrom || 'touch');
   }
 }

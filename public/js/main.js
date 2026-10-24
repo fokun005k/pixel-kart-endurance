@@ -21,7 +21,7 @@ import { SmokeSystem, SpraySystem } from './effects.js';
 import { Weather } from './weather.js';
 import { mulberry32 } from './textures.js';
 import { TouchControls } from './touch.js';
-import { KeyBindings, TouchLayout } from './controls.js';
+import { KeyBindings, TouchLayout, HudLayout } from './controls.js';
 import { Settings } from './settings.js';
 
 // ------------------------------------------------------------
@@ -105,7 +105,8 @@ resize();
 //  State
 // ------------------------------------------------------------
 const net = new Net();
-const hud = new Hud(hudCanvas, track);
+const hudLayout = new HudLayout();   // where the HUD panels sit (editable in the layout editor)
+const hud = new Hud(hudCanvas, track, hudLayout);
 let smoke = null;
 let spray = null;
 
@@ -255,10 +256,12 @@ const touch = new TouchControls({
   onMenu: () => ui.setPause(!ui.paused),
   onRespawn: () => respawn(),
   layout: touchLayout,
+  hudLayout,
+  hud,
 });
 hud.setTouch(touch.enabled);
 ui.syncAutoAccel(touch.autoAccel);
-const settings = new Settings({ bindings, layout: touchLayout, touch, toast: (m, ms) => ui.toast(m, ms) });
+const settings = new Settings({ bindings, layout: touchLayout, hudLayout, touch, toast: (m, ms) => ui.toast(m, ms) });
 
 function respawn() {
   if (G.phase === 'race' && G.me && G.race && G.race.active && G.me.pit.state !== 'work') G.me.respawn();
@@ -1127,6 +1130,25 @@ function buildHudState(remaining, cd, time) {
   };
 }
 
+/** example HUD shown while moving the panels in the layout editor (outside a race) */
+function previewHud(time) {
+  const L = track.length;
+  const karts = ['YOU', 'CPU 1', 'CPU 2', 'CPU 3'].map((name, i) => {
+    const p = track.pointAt((G.attractDist + L - i * 70) % L, 0);
+    return { name, color: KART_COLORS[i], dist: 2 - i * 0.04, lap: 1, isMe: i === 0, pit: false, x: p.x, z: p.z, gapM: i * 0.04 * L };
+  });
+  const def = SKILL_BY_ID[G.sel.skill] || SKILL_BY_ID.meister;
+  return {
+    phase: 'race', time, remaining: 263.4, countdown: null, spurt: false, spurtLabel: null,
+    weather: { state: 'sun', rain: 0, fog: 0, wet: 0, next: null },
+    position: 1, total: karts.length, lap: 2, bestLap: 52.31, lastLap: 53.02,
+    speedKmh: 98, gear: 4, rpm: 0.62, rpmValue: 8200, skillKey: bindings.describe('skill', true),
+    boost: false, limiter: false, tyreType: G.sel.tyre, tyre: 78,
+    skill: { def, cd: 0, cdTotal: def.cd || 0, jam: 0, target: null },
+    standings: karts, karts, slip: 0, smoke: 0, rearWarn: 0, pitInfo: null,
+  };
+}
+
 // ------------------------------------------------------------
 //  Main loop
 // ------------------------------------------------------------
@@ -1156,8 +1178,11 @@ function frame(now) {
   } else {
     updateAttract(dt);
     renderer.render(scene, camera);
+    // the layout editor shows the HUD over the menu background
+    if (touch.editing) { hud.draw(previewHud(time), dt); hudPreview = true; } else if (hudPreview) { hud.clear(); hudPreview = false; }
   }
 }
+let hudPreview = false;
 
 ui.setCourses(COURSES, TRACKS);
 syncMine().then((n) => { if (n) ui.invalidateRanking(); });

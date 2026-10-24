@@ -18,6 +18,8 @@
   <div id="stage">
     <canvas id="gl"></canvas>
     <canvas id="hud" width="960" height="540"></canvas>
+    <!-- layout editor: draggable outlines of the HUD panels -->
+    <div id="hud-handles"></div>
 
     <!-- smartphone controls (positions come from the saved layout) -->
     <div id="touch-ui">
@@ -140,7 +142,7 @@
           </div>
           <p id="rule-note" class="note"></p>
           <h2>👻 ゴースト対戦 <small id="ghost-note"></small></h2>
-          <p class="note">このコース・レース時間のランキング上位の走りがゴースト（半透明・ぶつからない）になって一緒に走ります。最大4台。</p>
+          <p class="note">このコース・レース時間のランキング上位の走りがゴースト（半透明・ぶつからない）になって一緒に走ります。最大4台。ゴーストは一人で走ったレースの記録だけにあります。</p>
           <div id="ghost-list" class="ghost-list"></div>
           <h2>初期タイヤ</h2>
           <div id="tyre-select" class="tyre-cards"></div>
@@ -200,6 +202,7 @@
       <div class="tabs" role="tablist">
         <button class="tab" data-tab="keys" type="button">⌨ キー操作（PC）</button>
         <button class="tab" data-tab="touch" type="button">📱 スマホ操作</button>
+        <button class="tab" data-tab="hud" type="button">🖥 画面表示</button>
         <button class="tab" data-tab="sound" type="button">♪ サウンド</button>
       </div>
 
@@ -229,11 +232,19 @@
         <div class="setting-row">
           <label class="toggle"><input type="checkbox" class="auto-accel"> 自動アクセル（ブレーキを押していない間は自動で加速）</label>
         </div>
-        <button id="btn-layout-edit" class="btn big" type="button">✥ ボタンの配置を編集する</button>
-        <p class="note">ボタンをドラッグして好きな位置へ動かせます。選んだボタンの大きさや、全体の透明度も変えられます。</p>
+        <button id="btn-layout-edit" class="btn big" type="button">✥ ボタン・画面表示の配置を編集する</button>
+        <p class="note">ボタンや、マップ・スピードメーターなどの表示をドラッグして好きな位置へ動かせます。選んだボタンの大きさや、ボタン全体の透明度も変えられます。</p>
         <div class="setting-row">
           <button id="btn-layout-reset" class="btn small" type="button">ボタン配置を初期状態に戻す</button>
           <button class="btn small fs-btn fs-only touch-only" type="button">⛶ 全画面</button>
+        </div>
+      </div>
+
+      <div class="tab-body" data-tab="hud">
+        <p class="note">レース中の表示（マップ・スピードメーター・タイヤ・タイマー・順位表・天気、PCでは個性も）を、ドラッグで好きな位置へ動かせます。PC とスマホの配置は別々に保存されます。</p>
+        <button id="btn-hud-edit" class="btn big" type="button">✥ 画面表示の配置を編集する</button>
+        <div class="setting-row">
+          <button id="btn-hud-reset" class="btn small" type="button">画面表示の配置を初期状態に戻す</button>
         </div>
       </div>
 
@@ -254,7 +265,8 @@
         <select id="ranking-course"></select>
         <div id="ranking-duration" class="seg"></div>
       </div>
-      <p class="note">5分・15分のレースを最後まで走りきると記録されます（友達・CPUとのレースも対象）。行を押すと周回ごとのラップタイムを表示します。</p>
+      <p class="note">5分・15分のレースを最後まで走りきると記録されます（友達・CPUとのレースも対象）。👻 = ゴーストあり（一人で走ったレースだけ作られます）。行を押すと周回ごとのラップタイムを表示します。</p>
+      <p id="ranking-scope" class="note"></p>
       <div class="table-wrap">
         <table class="results ranking">
           <thead><tr><th>順位</th><th>プレイヤー</th><th>走行距離</th><th>ベスト</th><th>個性</th><th>タイヤ</th><th>日付</th></tr></thead>
@@ -268,7 +280,7 @@
   <div id="layout-editor" class="hidden">
     <div class="le-bar">
       <div class="le-row">
-        <b>✥ ボタン配置の編集</b>
+        <b>✥ 配置の編集</b>
         <span class="le-hint">ドラッグで移動 ・ タップで選択</span>
         <button id="le-move" class="btn small" type="button" title="このバーを上下に移動">⇅ 上下</button>
         <button id="le-fold" class="btn small" type="button" title="このバーを小さくする">▬ たたむ</button>
@@ -276,13 +288,13 @@
       </div>
       <div class="le-row">
         <span>選択中：<b id="le-selected">ACCEL</b></span>
-        <label class="le-slider">大きさ <input type="range" id="le-size" min="60" max="170" step="5"><span id="le-size-val"></span></label>
-        <label class="le-slider">透明度 <input type="range" id="le-opacity" min="25" max="100" step="5"><span id="le-opacity-val"></span></label>
+        <label class="le-slider le-touch le-size-wrap">大きさ <input type="range" id="le-size" min="60" max="170" step="5"><span id="le-size-val"></span></label>
+        <label class="le-slider le-touch">ボタンの透明度 <input type="range" id="le-opacity" min="25" max="100" step="5"><span id="le-opacity-val"></span></label>
       </div>
       <div class="le-row">
-        <span>ハンドル：</span>
-        <button class="btn small le-steer" data-mode="slide" type="button">スライド</button>
-        <button class="btn small le-steer" data-mode="buttons" type="button">◀ ▶ ボタン</button>
+        <span class="le-touch">ハンドル：</span>
+        <button class="btn small le-steer le-touch" data-mode="slide" type="button">スライド</button>
+        <button class="btn small le-steer le-touch" data-mode="buttons" type="button">◀ ▶ ボタン</button>
         <span class="le-spacer"></span>
         <button id="le-reset" class="btn small" type="button">初期配置</button>
         <button id="le-cancel" class="btn small danger" type="button">キャンセル</button>

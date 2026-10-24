@@ -9,11 +9,16 @@ const TYRE_BY_IDX = ['S', 'M', 'H', 'W'];
 
 export const RANKED_DURATIONS = [300, 900];
 
+/** whether the server's ranking is shared by every server (database) or local to it */
+export let rankingShared = null;
+
 export async function fetchRanking(course, duration) {
   try {
     const r = await fetch(`/api/ranking?course=${course}&duration=${duration}`, { cache: 'no-store' });
     if (!r.ok) return [];
-    return (await r.json()).entries || [];
+    const j = await r.json();
+    rankingShared = !!j.shared;
+    return j.entries || [];
   } catch { return []; }
 }
 
@@ -109,12 +114,13 @@ async function deleteMine(id) {
   try { await tx('readwrite', s => s.delete(id)); } catch { /* ignore */ }
 }
 
-/** after a race: keep a copy of my new record (entry + ghost) */
+/** after a race: keep a copy of my new record (entry + ghost, if it has one) */
 export async function backupMine(course, duration, id) {
   try {
-    const [entries, ghost] = await Promise.all([fetchRanking(course, duration), fetchGhostRaw(id)]);
-    const entry = entries.find(e => e.id === id);
-    if (!entry || !ghost) return;
+    const entry = (await fetchRanking(course, duration)).find(e => e.id === id);
+    if (!entry) return;
+    const ghost = entry.hasGhost === false ? null : await fetchGhostRaw(id);
+    if (entry.hasGhost !== false && !ghost) return;
     await tx('readwrite', s => s.put({ id, entry, ghost }));
     // only the best few per course & length are worth keeping
     const mine = (await allMine()).filter(r => r.entry.course === course && r.entry.duration === duration)

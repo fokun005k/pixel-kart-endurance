@@ -168,6 +168,29 @@ body.steer-buttons .steer-btn { display: block; }
 body.steer-buttons #steer-zone { display: none; }
 
 /* ---- layout editor ---- */
+#hud-handles { display: none; }
+body.layout-edit #hud-handles { display: block; }
+.hud-handle {
+  position: fixed;
+  box-sizing: border-box;
+  border: 2px dashed rgba(124, 240, 255, 0.85);
+  background: rgba(124, 240, 255, 0.08);
+  cursor: grab;
+  touch-action: none;
+}
+.hud-handle span {
+  position: absolute; left: 0; top: 0;
+  padding: 1px 5px; font-size: 11px; font-weight: bold;
+  color: #062030; background: rgba(124, 240, 255, 0.9);
+  white-space: nowrap; pointer-events: none;
+}
+.hud-handle.le-selected { border: 3px solid var(--accent); background: rgba(255, 210, 59, 0.14); }
+.hud-handle.le-selected span { background: var(--accent); }
+body:not(.touch) .le-touch { display: none !important; }
+#layout-editor.hud-sel .le-size-wrap { display: none; }
+body.layout-edit:not(.touch) #touch-ui,
+body.layout-edit:not(.touch) #skill-btn,
+body.layout-edit:not(.touch) #skill-btn.hidden { display: none !important; }
 body.layout-edit #touch-ui { display: block; }
 body.layout-edit #skill-btn,
 body.layout-edit #skill-btn.hidden { display: flex !important; opacity: var(--tc-opacity, 0.8); }
@@ -294,6 +317,7 @@ table.ranking .laps .best { color: var(--green); font-weight: bold; }
 .ghost-row .g-name { flex: 1; font-weight: bold; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ghost-row .g-dist { color: var(--dim); white-space: nowrap; }
 .ghost-row.on { background: rgba(207, 214, 238, 0.18); }
+.ghost-row.no-ghost { opacity: 0.45; cursor: default; }
 .ghost-list.locked .ghost-row { cursor: default; }
 .ghost-empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
 .settings-panel { width: min(720px, 100%); }

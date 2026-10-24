@@ -167,3 +167,46 @@ export class TouchLayout {
   restore(snap) { this.data = structuredClone(snap); }
   reset() { this.data = structuredClone(DEFAULT_LAYOUT); }
 }
+
+// ------------------------------------------------------------
+//  HUD panels (drawn on the HUD canvas, 960x540). Their top-left corners can be
+//  moved in the layout editor; PC and smartphone layouts are kept separately.
+// ------------------------------------------------------------
+const HUD_LS = 'pke.hudLayout.v1';
+
+export const HUD_ITEMS = [
+  { id: 'timer', label: 'タイマー' },
+  { id: 'standings', label: '順位表' },
+  { id: 'minimap', label: 'マップ' },
+  { id: 'speed', label: 'スピードメーター' },
+  { id: 'tyre', label: 'タイヤ' },
+  { id: 'skill', label: '個性', desktopOnly: true },   // phones use the SKILL button
+  { id: 'weather', label: '天気' },
+];
+
+export const DEFAULT_HUD = {
+  desktop: { timer: [10, 10], standings: [760, 10], minimap: [800, 250], speed: [710, 404], tyre: [10, 420], skill: [10, 350], weather: [248, 10] },
+  touch: { timer: [10, 10], standings: [760, 10], minimap: [10, 270], speed: [350, 448], tyre: [10, 154], weather: [252, 470] },
+};
+
+export class HudLayout {
+  constructor() {
+    this.data = structuredClone(DEFAULT_HUD);
+    const s = load(HUD_LS);
+    for (const mode of ['desktop', 'touch']) {
+      const m = s && s[mode];
+      if (!m) continue;
+      for (const id of Object.keys(this.data[mode])) {
+        const v = m[id];
+        if (Array.isArray(v) && v.length === 2 && v.every(Number.isFinite)) this.data[mode][id] = [v[0], v[1]];
+      }
+    }
+  }
+
+  get(mode) { return this.data[mode]; }
+  set(mode, id, x, y) { this.data[mode][id] = [Math.round(x), Math.round(y)]; }
+  save() { save(HUD_LS, this.data); }
+  snapshot() { return structuredClone(this.data); }
+  restore(snap) { this.data = structuredClone(snap); }
+  reset(mode) { this.data[mode] = structuredClone(DEFAULT_HUD[mode]); }
+}

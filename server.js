@@ -11,6 +11,15 @@ const compression = require('compression');
 const { Server } = require('socket.io');
 const { RecordStore, Recorder, genId, GHOST_HZ } = require('./records');
 
+// optional .env file next to server.js (e.g. DATABASE_URL for the shared ranking).
+// Real environment variables (Render's "Environment" page) take precedence.
+try {
+  for (const line of require('fs').readFileSync(path.join(__dirname, '.env'), 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !line.trim().startsWith('#') && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+} catch { /* no .env */ }
+
 const PORT = Number(process.env.PORT) || 3000;
 const app = express();
 app.disable('x-powered-by');
@@ -44,23 +53,31 @@ const MAX_GHOSTS = 4;
 // ------------------------------------------------------------
 //  Rankings & ghosts (HTTP, so that big ghosts are gzip-compressed)
 // ------------------------------------------------------------
-const records = new RecordStore(process.env.DATA_DIR || path.join(__dirname, 'data'));
+// DATABASE_URL (PostgreSQL) = one ranking shared by every server; otherwise files in data/
+const records = new RecordStore({
+  dir: process.env.DATA_DIR || path.join(__dirname, 'data'),
+  databaseUrl: process.env.DATABASE_URL || '',
+});
+// pick up records made on other servers, retry writes that failed
+setInterval(() => { records.flush().then(() => records.fresh(55000)); }, 60000);
 const restoreOpt = {
   courseCount: COURSE_COUNT, durations: RANKED_DURATIONS, tyres: TYRES,
   skills: SKILLS.concat(['none']), cleanName: n => cleanName(n),
 };
 
-app.get('/api/ranking', (req, res) => {
+app.get('/api/ranking', async (req, res) => {
   const course = Number(req.query.course), duration = Number(req.query.duration);
+  await records.fresh();
   res.set('Cache-Control', 'no-store');
-  res.json({ course, duration, entries: records.list(course, duration) });
+  res.json({ course, duration, shared: records.shared, entries: records.list(course, duration) });
 });
-app.get('/api/records/ids', (_req, res) => {
+app.get('/api/records/ids', async (_req, res) => {
+  await records.fresh();
   res.set('Cache-Control', 'no-store');
   res.json({ ids: records.ids() });
 });
-app.get('/api/ghost/:id', (req, res) => {
-  const json = records.ghost(String(req.params.id));
+app.get('/api/ghost/:id', async (req, res) => {
+  const json = await records.ghost(String(req.params.id));
   if (!json) return res.status(404).json({ error: 'not found' });
   res.set('Cache-Control', 'public, max-age=86400');   // a ghost never changes
   res.type('json').send(json);
@@ -161,8 +178,8 @@ function rnd(a, b) { return a + Math.random() * (b - a); }
 function genWeather(duration) {
   let count;
   if (duration <= 60) count = 1;                         // dev races: always show something
-  else if (duration <= 300) count = Math.random() < 0.55 ? 1 : 0;
-  else count = Math.random() < 0.15 ? 0 : Math.random() < 0.6 ? 1 : 2;
+  else if (duration <= 300) count = Math.random() < 0.3 ? 1 : 0;           // 5 min: 70% sunny
+  else { const r = Math.random(); count = r < 0.4 ? 0 : r < 0.9 ? 1 : 2; } // 15 min: 40% sunny
   const events = [];
   // one event per equal slice of the race, so events never overlap
   const slice = duration / Math.max(1, count);
@@ -198,12 +215,11 @@ function startRace(room) {
   const grid = order.map((p, i) => ({ id: p.id, slot: i }));
   for (const p of room.players.values()) p.state = null;
   room.wx = room.weather ? genWeather(room.duration) : [];
-  // every human is recorded for the ranking / ghosts
+  // every human is recorded for the ranking; a ghost is only made when racing alone
+  // (with or without CPUs / ghosts)
   room.rec = new Map(humans(room).map(p => [p.id, new Recorder()]));
-  room.ghosts = room.ghosts.filter(id => {
-    const e = records.find(id);
-    return e && e.course === room.course && e.duration === room.duration;
-  });
+  room.solo = humans(room).length === 1;
+  room.ghosts = room.ghosts.filter(id => ghostOk(room, id));
   io.to(room.id).emit('raceInit', {
     serverNow: now,
     startAt: room.startAt,
@@ -216,6 +232,12 @@ function startRace(room) {
   });
 }
 
+/** a ranking entry that can race as a ghost in this room */
+function ghostOk(room, id) {
+  const e = records.find(id);
+  return !!e && e.hasGhost !== false && e.course === room.course && e.duration === room.duration;
+}
+
 /** put every human who finished the race into the course ranking */
 function recordResults(room) {
   const out = {};
@@ -223,7 +245,7 @@ function recordResults(room) {
   const field = room.players.size;
   for (const p of humans(room)) {
     const rec = room.rec.get(p.id);
-    if (!rec || !p.state || rec.n < GHOST_HZ * 10 || p.state.d <= 0) continue;
+    if (!rec || !p.state || p.state.d <= 0) continue;
     const dist = p.state.d;
     if (!records.wouldRank(room.course, room.duration, dist)) continue;
     const entry = {
@@ -237,7 +259,8 @@ function recordResults(room) {
       date: Date.now(), night: room.night,
       weather: room.wx.map(w => w.type), noSkills: room.noSkills, field,
     };
-    if (records.add(entry, rec.ghost())) out[p.id] = { rank: 0, id: entry.id };
+    const ghost = room.solo && rec.n >= GHOST_HZ * 10 ? rec.ghost() : null;
+    if (records.add(entry, ghost)) out[p.id] = { rank: 0, id: entry.id };
   }
   // final ranks (several players of the same race may have pushed each other down)
   const table = records.list(room.course, room.duration);
@@ -319,7 +342,7 @@ io.on('connection', (socket) => {
       duration: 300,
       course: 0,
       night: false,
-      weather: true,       // random rain / fog during the race
+      weather: false,      // sunny by default; the host can enable random rain / fog
       noSkills: false,     // everyone races without skills
       ghosts: [],          // ranking entries raced as ghosts
       status: 'lobby',
@@ -392,10 +415,7 @@ io.on('connection', (socket) => {
   socket.on('setGhosts', (ids) => {
     const room = hostRoom();
     if (!room || !Array.isArray(ids)) return;
-    const ok = [...new Set(ids.map(String))].filter(id => {
-      const e = records.find(id);
-      return e && e.course === room.course && e.duration === room.duration;
-    }).slice(0, MAX_GHOSTS);
+    const ok = [...new Set(ids.map(String))].filter(id => ghostOk(room, id)).slice(0, MAX_GHOSTS);
     if (ok.join() === room.ghosts.join()) return;
     room.ghosts = ok;
     resetReady(room);
@@ -507,7 +527,7 @@ setInterval(() => {
       const idx = Math.floor(((now - room.startAt) / 1000) * GHOST_HZ);
       for (const [id, rec] of room.rec) {
         const p = room.players.get(id);
-        if (!p || !p.state) continue;
+        if (!p || !p.state || !room.solo) continue;   // ghost samples: solo races only
         while (rec.n <= idx) rec.sample(p.state);
       }
     }
@@ -528,5 +548,6 @@ server.listen(PORT, () => {
   console.log('==============================================');
   console.log(`  PIXEL KART ENDURANCE server running`);
   console.log(`  -> http://localhost:${PORT}`);
+  console.log(`  ranking: ${records.backend.name}${records.shared ? ' (shared)' : ''}`);
   console.log('==============================================');
 });

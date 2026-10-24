@@ -4,7 +4,7 @@
 //  * ACCEL / BRAKE / SKILL / menu buttons at user-defined positions
 //  * layout editor: drag buttons, change size & opacity
 // ============================================================
-import { TOUCH_ITEMS } from './controls.js';
+import { TOUCH_ITEMS, HUD_ITEMS } from './controls.js';
 
 const $ = id => document.getElementById(id);
 
@@ -23,11 +23,14 @@ const ELEMENT_ID = {
 
 export class TouchControls {
   /**
-   * @param {{onSkill:Function, onMenu:Function, onRespawn:Function, layout:import('./controls.js').TouchLayout}} opts
+   * @param {{onSkill:Function, onMenu:Function, onRespawn:Function, layout:import('./controls.js').TouchLayout,
+   *          hudLayout:import('./controls.js').HudLayout, hud:import('./hud.js').Hud}} opts
    */
-  constructor({ onSkill, onMenu, onRespawn, layout }) {
+  constructor({ onSkill, onMenu, onRespawn, layout, hudLayout, hud }) {
     this.enabled = isTouchDevice();
     this.layout = layout;
+    this.hudLayout = hudLayout;
+    this.hud = hud;
     this.slideSteer = 0;
     this.accel = false;
     this.brake = false;
@@ -187,7 +190,8 @@ export class TouchControls {
     const L = this.layout.data;
     document.body.classList.toggle('steer-buttons', L.steerMode === 'buttons');
     document.documentElement.style.setProperty('--tc-opacity', String(L.opacity));
-    if (!this.enabled && !this.editing) return;
+    if (this.editing) this._placeHandles();
+    if (!this.enabled) return;
     const W = innerWidth, H = innerHeight, b = this._baseSize();
     for (const it of TOUCH_ITEMS) {
       const el = $(ELEMENT_ID[it.id]);
@@ -214,9 +218,49 @@ export class TouchControls {
   // ------------------------------------------------------------------
   //  layout editor (drag & drop)
   // ------------------------------------------------------------------
+  get hudMode() { return this.enabled ? 'touch' : 'desktop'; }
+
+  /** outlines over the HUD panels (HUD canvas pixels -> screen pixels) */
+  _placeHandles() {
+    const r = $('hud').getBoundingClientRect();
+    const k = r.width / 960;
+    for (const it of HUD_ITEMS) {
+      const el = this._handles[it.id];
+      const p = this.hud.pos(it.id);
+      el.style.display = p ? '' : 'none';
+      if (!p) continue;
+      const [w, h] = this.hud.panelSize(it.id);
+      Object.assign(el.style, {
+        left: `${Math.round(r.left + p[0] * k)}px`, top: `${Math.round(r.top + p[1] * k)}px`,
+        width: `${Math.round(w * k)}px`, height: `${Math.round(h * k)}px`,
+      });
+    }
+  }
+
   _initEditor() {
     this._drag = null;
-    this.selected = 'accel';
+    this.selected = this.enabled ? 'accel' : 'hud:minimap';
+    // HUD panel handles
+    this._handles = {};
+    const box = $('hud-handles');
+    for (const it of HUD_ITEMS) {
+      const el = document.createElement('div');
+      el.className = 'hud-handle';
+      el.innerHTML = `<span>${it.label}</span>`;
+      box.appendChild(el);
+      this._handles[it.id] = el;
+      el.addEventListener('pointerdown', (e) => {
+        if (!this.editing) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.select(`hud:${it.id}`);
+        const r = $('hud').getBoundingClientRect();
+        const k = r.width / 960;
+        const p = this.hud.pos(it.id);
+        this._drag = { hud: it.id, ox: (e.clientX - r.left) / k - p[0], oy: (e.clientY - r.top) / k - p[1], pid: e.pointerId };
+        try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      });
+    }
     for (const it of TOUCH_ITEMS) {
       const el = $(ELEMENT_ID[it.id]);
       el.addEventListener('pointerdown', (e) => {
@@ -232,6 +276,17 @@ export class TouchControls {
     window.addEventListener('pointermove', (e) => {
       const d = this._drag;
       if (!d || e.pointerId !== d.pid) return;
+      if (d.hud) {
+        const r = $('hud').getBoundingClientRect();
+        const k = r.width / 960;
+        const [w, h] = this.hud.panelSize(d.hud);
+        const x = Math.max(0, Math.min(960 - w, (e.clientX - r.left) / k - d.ox));
+        const y = Math.max(0, Math.min(540 - h, (e.clientY - r.top) / k - d.oy));
+        this.hudLayout.set(this.hudMode, d.hud, x, y);
+        this._placeHandles();
+        if (this.onDrag) this.onDrag(`hud:${d.hud}`);
+        return;
+      }
       const v = this.layout.data.items[d.id];
       v.x = Math.min(0.98, Math.max(0.02, (e.clientX - d.dx) / innerWidth));
       v.y = Math.min(0.98, Math.max(0.02, (e.clientY - d.dy) / innerHeight));
@@ -244,13 +299,19 @@ export class TouchControls {
   select(id) {
     this.selected = id;
     for (const it of TOUCH_ITEMS) $(ELEMENT_ID[it.id]).classList.toggle('le-selected', this.editing && it.id === id);
+    for (const it of HUD_ITEMS) this._handles[it.id].classList.toggle('le-selected', this.editing && `hud:${it.id}` === id);
     if (this.onSelect) this.onSelect(id);
   }
+
+  /** handle element of a HUD panel (for the toolbar's dodge logic) */
+  handleRect(id) { return this._handles[id].getBoundingClientRect(); }
 
   startEdit(onSelect) {
     this.editing = true;
     this.onSelect = onSelect;
     this._snapshot = this.layout.snapshot();
+    this._hudSnapshot = this.hudLayout.snapshot();
+    if (!this.enabled && !this.selected.startsWith('hud:')) this.selected = 'hud:minimap';
     this.reset();
     document.body.classList.add('layout-edit');
     this.applyLayout();
@@ -261,10 +322,13 @@ export class TouchControls {
   stopEdit(keep) {
     if (!keep && this._snapshot) this.layout.restore(this._snapshot);
     else this.layout.save();
+    if (!keep && this._hudSnapshot) this.hudLayout.restore(this._hudSnapshot);
+    else this.hudLayout.save();
     this.editing = false;
     this._drag = null;
     document.body.classList.remove('layout-edit');
     for (const it of TOUCH_ITEMS) $(ELEMENT_ID[it.id]).classList.remove('le-selected');
+    for (const it of HUD_ITEMS) this._handles[it.id].classList.remove('le-selected');
     if (!this.enabled) {
       // PC preview: drop the inline positions again
       for (const it of TOUCH_ITEMS) $(ELEMENT_ID[it.id]).removeAttribute('style');

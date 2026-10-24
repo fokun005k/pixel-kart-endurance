@@ -1,10 +1,15 @@
 'use strict';
 // ============================================================
-//  Course records: the top 10 per course and race length, each with a ghost
-//  (the whole race, sampled at 10 Hz). index.json holds the tables and every
-//  ghost lives in ghosts/<id>.json.
+//  Course records: the top 10 per course and race length. Records from
+//  solo races also carry a ghost (the whole race, sampled at 10 Hz).
 //
-//  Free hosts such as Render wipe the disk on restart, so players' browsers
+//  Storage backends:
+//   - PgBackend   (DATABASE_URL set): one shared PostgreSQL database, so every
+//                 server (Render, a PC running share.bat, ...) sees the same ranking
+//   - FileBackend (default): data/index.json + data/ghosts/<id>.json
+//
+//  The tables are kept in memory for the game logic and reloaded from the
+//  database regularly to pick up records made on other servers. Browsers also
 //  keep a copy of their own records and upload them again (see restore()).
 // ============================================================
 const fs = require('fs');
@@ -20,6 +25,10 @@ function genId() {
   let s = '';
   for (let i = 0; i < 12; i++) s += c[Math.floor(Math.random() * c.length)];
   return s;
+}
+
+function sortTable(t) {
+  return t.sort((a, b) => b.dist - a.dist || a.date - b.date);
 }
 
 // ------------------------------------------------------------
@@ -113,21 +122,156 @@ function cleanEntry(e, opt) {
     weather: Array.isArray(e.weather) ? e.weather.filter(w => w === 'rain' || w === 'fog').slice(0, 4) : [],
     noSkills: !!e.noSkills,
     field: Math.max(1, Math.min(8, Math.trunc(num(e.field, 1)))),
+    hasGhost: e.hasGhost !== false,   // records made before this flag existed always had one
   };
 }
 
 // ------------------------------------------------------------
-class RecordStore {
+//  Backends
+// ------------------------------------------------------------
+class FileBackend {
   constructor(dir) {
+    this.name = `files (${dir})`;
     this.dir = dir;
     this.ghostDir = path.join(dir, 'ghosts');
-    this.tables = {};
+    this.memGhosts = new Map();   // when the disk cannot be written
     try { fs.mkdirSync(this.ghostDir, { recursive: true }); } catch { /* read-only disk: memory only */ }
+  }
+
+  async load() {
     try {
-      const j = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8'));
-      if (j && j.tables && typeof j.tables === 'object') this.tables = j.tables;
+      const j = JSON.parse(fs.readFileSync(path.join(this.dir, 'index.json'), 'utf8'));
+      if (j && j.tables && typeof j.tables === 'object') return j.tables;
     } catch { /* first run */ }
-    this.ghosts = new Map();   // id -> JSON string, for disks that cannot be written
+    return {};
+  }
+
+  /** the index is written at once (small, changes only when a race ends) so a restart never loses a record */
+  async persist({ tables, entry, ghostJson, dropped }) {
+    if (entry && ghostJson) {
+      try { fs.writeFileSync(path.join(this.ghostDir, `${entry.id}.json`), ghostJson); } catch { this.memGhosts.set(entry.id, ghostJson); }
+    }
+    for (const id of dropped) {
+      this.memGhosts.delete(id);
+      fs.unlink(path.join(this.ghostDir, `${id}.json`), () => {});
+    }
+    const file = path.join(this.dir, 'index.json');
+    fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, tables }));
+    fs.renameSync(file + '.tmp', file);
+  }
+
+  async ghost(id) {
+    if (this.memGhosts.has(id)) return this.memGhosts.get(id);
+    try { return fs.readFileSync(path.join(this.ghostDir, `${id}.json`), 'utf8'); } catch { return null; }
+  }
+}
+
+class PgBackend {
+  /** @param {string|{query:Function}} db connection string, or anything with query(text, params) */
+  constructor(db) {
+    this.shared = true;
+    if (typeof db === 'string') {
+      const { Pool } = require('pg');
+      this.pool = new Pool({ connectionString: db, max: 3, idleTimeoutMillis: 30000 });
+      this.pool.on('error', err => console.warn('records db:', err.message));
+      this.name = 'PostgreSQL';
+    } else {
+      this.pool = db;
+      this.name = 'PostgreSQL (injected)';
+    }
+    this._init = null;
+  }
+
+  q(text, params) { return this.pool.query(text, params); }
+
+  init() {
+    if (!this._init) {
+      this._init = (async () => {
+        await this.q(`CREATE TABLE IF NOT EXISTS pke_records (
+          id TEXT PRIMARY KEY,
+          course INTEGER NOT NULL,
+          duration INTEGER NOT NULL,
+          dist DOUBLE PRECISION NOT NULL,
+          date BIGINT NOT NULL,
+          entry JSONB NOT NULL,
+          ghost TEXT
+        )`);
+        await this.q('CREATE INDEX IF NOT EXISTS pke_records_table ON pke_records (course, duration, dist DESC)');
+      })().catch((err) => { this._init = null; throw err; });
+    }
+    return this._init;
+  }
+
+  async load() {
+    await this.init();
+    const { rows } = await this.q('SELECT entry FROM pke_records');
+    const tables = {};
+    for (const r of rows) {
+      const e = typeof r.entry === 'string' ? JSON.parse(r.entry) : r.entry;
+      (tables[`${e.course}-${e.duration}`] = tables[`${e.course}-${e.duration}`] || []).push(e);
+    }
+    for (const t of Object.values(tables)) sortTable(t);
+    return tables;
+  }
+
+  async persist({ entry, ghostJson }) {
+    if (!entry) return;
+    await this.init();
+    await this.q(
+      'INSERT INTO pke_records (id, course, duration, dist, date, entry, ghost) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING',
+      [entry.id, entry.course, entry.duration, entry.dist, entry.date, JSON.stringify(entry), ghostJson || null],
+    );
+    // keep the top 10 of that table (other servers may have added records meanwhile)
+    await this.q(
+      `DELETE FROM pke_records WHERE course = $1 AND duration = $2 AND id NOT IN (
+         SELECT id FROM pke_records WHERE course = $1 AND duration = $2 ORDER BY dist DESC, date ASC LIMIT ${TOP})`,
+      [entry.course, entry.duration],
+    );
+  }
+
+  async ghost(id) {
+    await this.init();
+    const { rows } = await this.q('SELECT ghost FROM pke_records WHERE id = $1', [id]);
+    return rows.length ? rows[0].ghost : null;
+  }
+}
+
+// ------------------------------------------------------------
+class RecordStore {
+  /** @param {{dir?:string, databaseUrl?:string, db?:{query:Function}}} opt */
+  constructor(opt = {}) {
+    this.backend = opt.db ? new PgBackend(opt.db)
+      : opt.databaseUrl ? new PgBackend(opt.databaseUrl)
+        : new FileBackend(opt.dir || path.join(__dirname, 'data'));
+    this.tables = {};
+    this.pending = new Map();   // id -> {entry, ghostJson} not yet stored by the backend
+    this.loadedAt = 0;
+    this.ready = this.refresh();
+  }
+
+  get shared() { return !!this.backend.shared; }
+
+  /** (re)load every table from the backend; records still being written are kept */
+  async refresh() {
+    try {
+      const tables = await this.backend.load();
+      for (const { entry } of this.pending.values()) {
+        const k = this.key(entry.course, entry.duration);
+        const t = (tables[k] = tables[k] || []);
+        if (!t.some(e => e.id === entry.id)) { t.push(entry); sortTable(t).splice(TOP); }
+      }
+      this.tables = tables;
+      this.loadedAt = Date.now();
+      return true;
+    } catch (err) {
+      console.warn('records: could not load from', this.backend.name, '-', err.message);
+      return false;
+    }
+  }
+
+  /** refresh first when the cached tables are older than maxAge ms (shared database only) */
+  async fresh(maxAge = 15000) {
+    if (this.shared && Date.now() - this.loadedAt > maxAge) await this.refresh();
   }
 
   key(course, duration) { return `${course}-${duration}`; }
@@ -147,27 +291,50 @@ class RecordStore {
     return t.length < TOP || dist > t[t.length - 1].dist;
   }
 
-  /** insert a record; returns its rank (1..10), or 0 if it did not make the table */
+  /**
+   * insert a record (ghost may be null: multiplayer races are ranked without one);
+   * returns its rank (1..10), or 0 if it did not make the table
+   */
   add(entry, ghost) {
     if (this.find(entry.id) || !this.wouldRank(entry.course, entry.duration, entry.dist)) return 0;
+    entry.hasGhost = !!ghost;
     const k = this.key(entry.course, entry.duration);
     const t = (this.tables[k] = this.tables[k] || []);
     t.push(entry);
-    t.sort((a, b) => b.dist - a.dist || a.date - b.date);
-    for (const e of t.splice(TOP)) this._dropGhost(e.id);
+    sortTable(t);
+    const dropped = t.splice(TOP).map(e => e.id);
     const rank = t.indexOf(entry) + 1;
     if (rank > 0) {
-      this._writeGhost(entry.id, JSON.stringify(ghost));
-      this._save();
+      const ghostJson = ghost ? JSON.stringify(ghost) : null;
+      this.pending.set(entry.id, { entry, ghostJson });
+      this.backend.persist({ tables: this.tables, entry, ghostJson, dropped })
+        .then(() => this.pending.delete(entry.id))
+        .catch((err) => {
+          console.warn('records: could not save', err.message);
+          // keep it pending: retried on the next refresh cycle
+        });
     }
     return rank;
   }
 
+  /** retry records whose write failed (e.g. the database was asleep) */
+  async flush() {
+    for (const { entry, ghostJson } of [...this.pending.values()]) {
+      try {
+        await this.backend.persist({ tables: this.tables, entry, ghostJson, dropped: [] });
+        this.pending.delete(entry.id);
+      } catch { /* try again later */ }
+    }
+  }
+
   /** ghost JSON string (or null) */
-  ghost(id) {
-    if (!ID_RE.test(id) || !this.find(id)) return null;
-    if (this.ghosts.has(id)) return this.ghosts.get(id);
-    try { return fs.readFileSync(path.join(this.ghostDir, `${id}.json`), 'utf8'); } catch { return null; }
+  async ghost(id) {
+    if (!ID_RE.test(id)) return null;
+    const p = this.pending.get(id);
+    if (p) return p.ghostJson;
+    const e = this.find(id);
+    if (e && e.hasGhost === false) return null;
+    try { return await this.backend.ghost(id); } catch { return null; }
   }
 
   /** a record uploaded again by the browser that owns it */
@@ -175,30 +342,13 @@ class RecordStore {
     const entry = cleanEntry(rawEntry, opt);
     if (!entry) return { ok: false, error: 'bad record' };
     if (this.find(entry.id)) return { ok: true, rank: 0, exists: true };
-    const ghost = cleanGhost(rawGhost, entry.duration);
-    if (!ghost) return { ok: false, error: 'bad ghost' };
-    return { ok: true, rank: this.add(entry, ghost) };
-  }
-
-  _writeGhost(id, json) {
-    try { fs.writeFileSync(path.join(this.ghostDir, `${id}.json`), json); this.ghosts.delete(id); } catch { this.ghosts.set(id, json); }
-  }
-
-  _dropGhost(id) {
-    this.ghosts.delete(id);
-    fs.unlink(path.join(this.ghostDir, `${id}.json`), () => {});
-  }
-
-  /** written at once (small file, changes only when a race ends) so a restart never loses a record */
-  _save() {
-    const file = path.join(this.dir, 'index.json');
-    try {
-      fs.writeFileSync(file + '.tmp', JSON.stringify({ v: 1, tables: this.tables }));
-      fs.renameSync(file + '.tmp', file);
-    } catch (err) {
-      console.warn('records: could not save', err.message);
+    let ghost = null;
+    if (entry.hasGhost) {
+      ghost = cleanGhost(rawGhost, entry.duration);
+      if (!ghost) return { ok: false, error: 'bad ghost' };
     }
+    return { ok: true, rank: this.add(entry, ghost) };
   }
 }
 
-module.exports = { RecordStore, Recorder, genId, GHOST_HZ, TOP };
+module.exports = { RecordStore, Recorder, PgBackend, FileBackend, genId, GHOST_HZ, TOP };

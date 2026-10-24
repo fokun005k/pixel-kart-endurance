@@ -78,27 +78,38 @@ export function renderTrackMap(tr, W, H, { background = null, pad = 8, dot = 2, 
   return { canvas: c, transform: { ox, oz, sc } };
 }
 
-// Panel positions. On touch devices the bottom corners belong to the thumbs,
-// so speed moves to the bottom centre and tyre/minimap stack on the left.
-const LAYOUTS = {
-  desktop: { tyre: [10, 420], skill: [10, 350], minimap: [800, 250], speed: [710, 404, 240, 124], weather: [248, 10] },
-  touch: { tyre: [10, 154], skill: null, minimap: [10, 270], speed: [350, 448, 260, 84], weather: [252, 470] },
-};
+// Panel sizes in HUD pixels. Positions come from the player's HudLayout (controls.js):
+// on touch devices the bottom corners belong to the thumbs, so the defaults differ.
+const SPEED_SIZE = { desktop: [240, 124], touch: [260, 84] };
+const PANEL_SIZE = { timer: [230, 118], standings: [190, 188], minimap: [150, 120], tyre: [250, 108], skill: [250, 62], weather: [96, 58] };
 
 export class Hud {
-  constructor(canvas, track) {
+  /** @param {import('./controls.js').HudLayout} layout */
+  constructor(canvas, track, layout) {
+    this.layout = layout;
+    this.mode = 'desktop';
     this.c = canvas;
     this.g = canvas.getContext('2d');
     this.g.imageSmoothingEnabled = false;
     this.track = track;
     this.messages = [];
     this.visible = false;
-    this.L = LAYOUTS.desktop;
     this._buildMinimap();
     this._buildSmoke();
   }
 
-  setTouch(on) { this.L = on ? LAYOUTS.touch : LAYOUTS.desktop; }
+  setTouch(on) { this.mode = on ? 'touch' : 'desktop'; }
+
+  /** [w, h] of a panel in HUD pixels */
+  panelSize(id) { return id === 'speed' ? SPEED_SIZE[this.mode] : PANEL_SIZE[id]; }
+
+  /** top-left of a panel, kept on screen; null if the panel is not used in this mode */
+  pos(id) {
+    const p = this.layout.get(this.mode)[id];
+    if (!p) return null;
+    const [w, h] = this.panelSize(id);
+    return [Math.max(0, Math.min(HUD_W - w, p[0])), Math.max(0, Math.min(HUD_H - h, p[1]))];
+  }
 
   message(text, color = '#ffffff', dur = 1.6, scale = 6) {
     this.messages = this.messages.filter(m => m.text !== text);
@@ -203,23 +214,27 @@ export class Hud {
 
   _drawTimer(st, time) {
     const g = this.g;
-    this._panel(10, 10, 230, 118);
-    drawText(g, 'TIME LEFT', 22, 20, 2, '#a8c8ff');
+    const [x, y] = this.pos('timer');
+    this._panel(x, y, 230, 118);
+    drawText(g, 'TIME LEFT', x + 12, y + 10, 2, '#a8c8ff');
     const red = st.remaining <= 30 && st.phase === 'race';
     const blinkOff = red && Math.floor(time * 4) % 2 === 1;
-    if (!blinkOff) drawText(g, fmtTime(st.remaining), 22, 40, 5, red ? '#ff3a3a' : '#ffffff');
-    drawText(g, `LAP ${Math.max(1, st.lap)}`, 22, 86, 3, '#ffe060');
-    drawText(g, `BEST ${fmtLap(st.bestLap)}`, 120, 92, 1, '#c0c0d0');
-    drawText(g, `LAST ${fmtLap(st.lastLap)}`, 120, 104, 1, '#c0c0d0');
+    if (!blinkOff) drawText(g, fmtTime(st.remaining), x + 12, y + 30, 5, red ? '#ff3a3a' : '#ffffff');
+    drawText(g, `LAP ${Math.max(1, st.lap)}`, x + 12, y + 76, 3, '#ffe060');
+    drawText(g, `BEST ${fmtLap(st.bestLap)}`, x + 110, y + 82, 1, '#c0c0d0');
+    drawText(g, `LAST ${fmtLap(st.lastLap)}`, x + 110, y + 94, 1, '#c0c0d0');
     if (st.spurtLabel) {
       const on = Math.floor(time * 3) % 2 === 0;
-      drawText(g, st.spurtLabel, 22, 136, 2, on ? '#ff5050' : '#ffd0d0');
+      // below the panel, or above it when the panel sits at the bottom
+      const ly = y + 126 + 14 > HUD_H ? y - 18 : y + 126;
+      drawText(g, st.spurtLabel, x + 12, ly, 2, on ? '#ff5050' : '#ffd0d0');
     }
   }
 
   _drawStandings(st) {
     const g = this.g;
-    const x = 760, y = 10, w = 190;
+    const [x, y] = this.pos('standings');
+    const w = 190;
     this._panel(x, y, w, 64);
     drawText(g, 'POS', x + 12, y + 10, 2, '#a8c8ff');
     drawText(g, ordinal(st.position), x + 12, y + 26, 4, st.position === 1 ? '#ffd23b' : '#ffffff');
@@ -249,7 +264,7 @@ export class Hud {
 
   _drawMinimap(st) {
     const g = this.g;
-    const [x, y] = this.L.minimap;
+    const [x, y] = this.pos('minimap');
     g.drawImage(this.mmCanvas, x, y);
     const { ox, oz, sc } = this.mm;
     for (const k of st.karts) {
@@ -290,7 +305,8 @@ export class Hud {
 
   _drawSpeed(st, time) {
     const g = this.g;
-    const [x, y, w, h] = this.L.speed;
+    const [x, y] = this.pos('speed');
+    const [w, h] = this.panelSize('speed');
     const spd = String(Math.round(st.speedKmh)).padStart(3, ' ');
     const rpmText = String(Math.round(st.rpmValue / 100) * 100);
     this._panel(x, y, w, h);
@@ -317,7 +333,7 @@ export class Hud {
 
   _drawTyre(st, time) {
     const g = this.g;
-    const [x, y] = this.L.tyre;
+    const [x, y] = this.pos('tyre');
     const w = 250, h = 108;
     this._panel(x, y, w, h);
     const T = TYRES[st.tyreType];
@@ -361,8 +377,9 @@ export class Hud {
   _drawSkill(st, time) {
     const g = this.g;
     const sk = st.skill;
-    if (!sk || !this.L.skill || sk.def.type === 'none') return;
-    const [x, y] = this.L.skill;
+    const p = this.pos('skill');
+    if (!sk || !p || sk.def.type === 'none') return;
+    const [x, y] = p;
     const w = 250, h = 62;
     this._panel(x, y, w, h);
     g.font = `bold 16px ${JP_FONT}`;
@@ -468,7 +485,7 @@ export class Hud {
   /** small weather panel: icon, state, track wetness or a forecast */
   _drawWeather(w, time) {
     const g = this.g;
-    const [x, y] = this.L.weather;
+    const [x, y] = this.pos('weather');
     const bw = 96, bh = 58;
     this._panel(x, y, bw, bh);
     const ix = x + 8, iy = y + 8;   // 24x24 icon
